@@ -1,0 +1,1376 @@
+---
+title: "Optimisation, monte carlo and bootstrapping"
+output: pdf_document
+date: "2025-07-24"
+---
+
+```{r}
+# Bisection method:
+# finding maximum of g(x):
+# example <- g(x) = log(x)/(1+x)
+
+par(mfrow = c(2, 2))
+
+# 1. Plot original function g(x)
+x <- seq(1, 5, length = 100)
+gx <- log(x) / (1 + x)
+plot(x, gx, type = "l", xlab = "x", ylab = "g(x)", main = "g(x)")
+
+# 2. Define derivative numerator: f(x) = g'(x) numerator
+f <- function(x) {
+  1/x + 1 - log(x)
+}
+
+# 3. Plot f(x) to help choose interval
+curve(f, from = 1, to = 6, ylab = "f(x)", main = "g'(x) numerator")
+abline(h = 0, col = "red", lty = 2)
+
+# 4. Choose interval [a, b] where f(a) * f(b) < 0
+a <- 1
+b <- 5
+
+# 5. Bisection method - skeleton code - same for everything
+bisection <- function(f, a, b, tol = 1e-6, max_iter = 100) {
+  if (f(a) * f(b) > 0) stop("f(a) and f(b) must have opposite signs")
+  
+  for (i in 1:max_iter) {
+    c <- (a + b) / 2
+    fc <- f(c)
+    
+    if (abs(fc) < tol || (b - a)/2 < tol) {
+      return(c)
+    }
+    
+    if (f(a) * fc < 0) {
+      b <- c
+    } else {
+      a <- c
+    }
+  }
+  
+  warning("Max iterations reached without convergence")
+  return((a + b) / 2)
+}
+
+# 6. Find root using bisection
+bisection(f, a, b)
+# 7. Check with built-in uniroot
+root_check <- uniroot(f, c(a, b))
+
+
+
+```
+
+
+
+
+```{r}
+# another bisection example
+# g(x) = x^3 -x-2
+par(mfrow=c(2,2))
+x<- seq(-6,6,length=1000)
+gx <- x^3 - x - 2
+plot(x,gx,type = "l", xlab = "x", ylab="g(x)")
+
+f <- function(x){
+  3*x^2-1
+}
+
+curve(3*x^2-1,from=-6,to=6)
+abline(h=0)
+
+a <- 0
+b <- 6
+
+bisection <- function(f,a,b,tol=1e-6,max_iter=100){
+  if (f(a)*f(b) >0) stop("f(a) and f(b) must have opposite signs")
+      for(i in 1:max_iter){
+        c <- (a+b)/2 # midpoint
+        fc <- f(c)
+        if(abs(fc)<tol||(b-a)/2<tol){
+          return(c)
+        }
+        if(f(a)*fc<0){
+          b <- c
+        } else{
+          a<-c
+          }
+        } 
+  warning("Max iterations reached without convergence")
+      return((a+b)/2)
+}
+
+bisection(f,0,6)
+
+uniroot(f,c(0,6))
+
+
+```
+
+
+
+
+
+
+```{r}
+# one more bisection example
+# sqrt(x)/(1+x)
+
+x <- seq(1,5,length=1000)
+gx <- sqrt(x)/(1+x)
+plot(x,gx,type="l")
+
+# numerator
+f <- function(x){
+  1-x
+}
+
+curve(f,from=-3,to=3)
+abline(h=0)
+
+a <- -1
+b <- 3
+
+bisection <- function(f,a,b,tol=1e-6,max_iter=100){
+  if(f(a)*f(b)>0) stop("f(a) and f(b) must have opposite signs")
+  for(i in 1:max_iter){
+    c <- (a+b)/2
+    fc <- f(c)
+    if(abs(fc)<tol||(b-a)/2<tol){
+      return(c)
+    } 
+    if(f(a)*f(c)<0){
+      b <- c
+    }
+    else{
+      a<-c
+    }
+  }
+  warning("Max iterations reached without convergence")
+  return((a+b)/2)
+}
+
+bisection(f,a,b)
+
+uniroot(f,c(-1,3))
+```
+
+
+
+
+
+
+
+```{r}
+# maximum likelihood
+# poisson distribution 
+counts <- c(3, 1, 1, 3, 1, 4, 3, 2, 0, 5, 0, 4, 2)
+
+log_like <- function(lambda,x){
+ ll <-  sum(log((lambda^x*exp(-lambda)/factorial(x))))
+ return(-ll)
+}
+
+theta_rand <- seq(0,5,length=100)
+likelihood_values <- sapply(theta_rand,log_like, x=counts)
+plot(theta_rand,likelihood_values,type="l", xlab= expression(lambda), ylab="neg loglikelihood")
+
+optim(5,log_like, hessian = TRUE, x=counts)
+nlm(log_like,5,hessian=TRUE,x=counts)
+newton_poisson <- function(counts, lambda0 = 1, tol = 1e-6, max_iter = 100) {
+  lambda <- lambda0
+  n <- length(counts)
+  sum_x <- sum(counts)
+
+  for (i in 1:max_iter) {
+    score <- sum_x / lambda - n
+    info  <- -sum_x / lambda^2
+    step  <- score / info
+    lambda <- lambda - step
+
+    if (abs(step) < tol) break
+  }
+
+  return(lambda)
+}
+
+newton_poisson(counts)
+
+
+#plot log likelihood
+
+
+
+
+
+
+
+```
+
+
+
+
+```{r}
+x <- c(0.2, 1.5, 0.8, 0.3, 2.1, 0.7, 0.9, 1.1, 0.5)
+
+loglike <- function(theta){
+  ll <- sum(log(theta*exp(-theta*x)))
+  return(-ll)
+}
+
+theta <- seq(1,6,length=100)
+likevals <- sapply(theta,loglike)
+plot(theta,likevals,type="l")
+
+par_est <- length(x)/sum(x)
+optim(par_est,loglike,hessian = TRUE)
+out1 <- nlm(loglike,par_est,hessian=TRUE)
+
+sqrt(solve(out1$hessian))
+
+
+
+
+
+# newtons method
+newton_mle <- function(start, score_fn, info_fn, tol = 1e-6, max_iter = 100) {
+  theta <- start
+  for (i in 1:max_iter) {
+    score <- score_fn(theta)
+    info  <- info_fn(theta)
+    
+    if (info == 0) stop("Zero curvature — divide-by-zero risk")
+    
+    step <- score / info
+    theta <- theta - step
+    
+    if (abs(step) < tol) break
+  }
+  return(theta)
+}
+
+x <- c(0.2, 1.5, 0.8, 0.3, 2.1, 0.7, 0.9, 1.1, 0.5)
+n <- length(x)
+sum_x <- sum(x)
+
+score_exp <- function(theta) n / theta - sum_x
+info_exp  <- function(theta) -n / theta^2
+
+newton_mle(start = 1, score_fn = score_exp, info_fn = info_exp)
+
+
+
+
+```
+
+
+
+```{r}
+# poisson regression 
+# Yi ~poisson(lambdai), #(lambdai = ai+Bxi)
+# so 2 parameters
+
+y <- c(2,4,3,0,1,4,3,6,10,7)
+
+x <- c(0.49909145, 1.24373850, 0.34376255, 0.03833630, 0.09699331, 
+       0.19469526, 0.21237902, 1.56276200, 1.56909233, 1.88487024)
+
+loglike <- function(p){
+  ll <- sum(log(dpois(y, lambda = p[1]+p[2]*x)))
+  return(-ll)}
+p <- c(length(x)/sum(x),length(y)/sum(y))
+nlm(loglike,p,hessian=TRUE)
+
+
+
+
+
+
+
+
+```
+
+
+
+
+```{r}
+x <- c(0.5, 1.2, 0.7, 0.9, 1.5, 1.8, 0.2, 1.0, 1.7, 1.9)
+y <- c(0,   1,   0,   0,   1,   1,   0,   1,   1,   1)
+
+loglikes <- function(p){
+  p <- exp(p[1]+p[2]*x)
+  ll <- sum(log(p^x*(1-p)^(1-x)))
+  return(-ll)
+}
+
+par_est <- c(length(x)/sum(x),length(y)/sum(y))
+nlm(loglikes, par_est,hessian=TRUE)
+
+
+
+
+
+
+
+
+
+```
+
+
+
+
+```{r}
+# poisson regression using nlm
+
+y <- c(2,4,3,0,1,4,3,6,10,7)
+
+x <- c(0.49909145, 1.24373850, 0.34376255, 0.03833630, 0.09699331, 
+       0.19469526, 0.21237902, 1.56276200, 1.56909233, 1.88487024)
+
+loglike <- function(p){
+  ll <- sum(log(dpois(y,lambda=p[1]+p[2]*x)))
+  return(-ll)
+}
+
+par_est <- c(length(x)/sum(x),length(y)/sum(y))
+
+nlm(loglike,par_est,hessian=TRUE)
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+
+```{r}
+# gauss seidel algorithm to maximize likelihood
+
+# Gauss-Seidel skeleton for maximizing a 2-parameter log-likelihood
+
+# Define your log-likelihood function
+loglike <- function(par, x, y) {
+  alpha <- par[1]
+  beta  <- par[2]
+  lambda <-alpha + beta * x
+  ll <- sum(dpois(y, lambda, log = TRUE))  # log-likelihood for Poisson
+  return(ll)
+}
+
+# Gauss-Seidel optimization function
+gauss_seidel <- function(x, y, init = c(0, 0), tol = 1e-6, max_iter = 100) {
+  alpha <- init[1]
+  beta <- init[2]
+
+  for (i in 1:max_iter) {
+    alpha_old <- alpha
+    beta_old <- beta
+
+    # Step 1: Maximize w.r.t. alpha, keeping beta fixed
+    f_alpha <- function(a) -loglike(c(a, beta), x, y)
+    alpha <- optimize(f_alpha, interval = c(-10, 10))$minimum
+
+    # Step 2: Maximize w.r.t. beta, keeping alpha fixed
+    f_beta <- function(b) -loglike(c(alpha, b), x, y)
+    beta <- optimize(f_beta, interval = c(-10, 10))$minimum
+
+    # Convergence check
+    if (sqrt((alpha - alpha_old)^2 + (beta - beta_old)^2) < tol) {
+      break
+    }
+  }
+
+  return(c(alpha = alpha, beta = beta))
+}
+
+# Example usage
+x <- c(0.49909145, 1.24373850, 0.34376255, 0.03833630, 0.09699331,
+       0.19469526, 0.21237902, 1.56276200, 1.56909233, 1.88487024)
+y <- c(2, 4, 3, 0, 1, 4, 3, 6, 10, 7)
+
+gauss_seidel(x, y)
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+```{r}
+
+y <- c(2,4,3,0,1,4,3,6,10,7)
+
+x <- c(0.49909145, 1.24373850, 0.34376255, 0.03833630, 0.09699331, 
+       0.19469526, 0.21237902, 1.56276200, 1.56909233, 1.88487024)
+loglike <- function(p,x,y){
+  lambda <- p[1]+p[2]*x
+  ll <- sum(log(dpois(y,lambda)))
+  return(ll)
+}
+
+
+gauss_seidel <- function(x,y,init=c(0,0),tol=1e-6,max_iter=100){
+  alpha <- init[1]
+  beta <- init[2]
+  for(i in 1:max_iter){
+    alpha_old <- alpha
+    beta_old <- beta
+    f_alpha <- function(a) -loglike(c(a,beta),x,y)
+    alpha <- optimize(f_alpha,interval=c(-10,10))$minimum
+    f_beta <- function(b) -loglike(c(alpha,b),x,y)
+    beta <- optimize(f_beta,interval=c(-10,10))$minimum
+    if(sqrt((alpha-alpha_old)^2+(beta-beta_old)^2)<tol){
+      break
+    }
+  }
+  return(c(alpha=alpha,beta=beta))
+}
+
+
+gauss_seidel(x,y)
+
+
+
+
+```
+
+
+
+```{r}
+# constrained (linear) optimization
+# multiply constraint and objective function by -1
+ # nr of constraints = nr of rows
+#  Example: Maximize: 2x + 2y + 2z
+# subject to : -2x+y+z<=1, 4x-y+3z<=3, x>=0, y>=0, z>=0
+# step 1: take negative of everything, inequality flips
+ui <- matrix(c(2,-1,-1,-4,1,-3,1,0,0,0,1,0,0,0,1), byrow = TRUE,nrow = 5)
+ci <- c(-1,-3,0,0,0) # rhs of constraint
+# initial guess
+init <- c(0.5,0.1,0.1) # since x,y,z
+fx <- function(theta){
+  x <- theta[1]
+  y <- theta[2]
+  z <- theta[3]
+  fx <- -2*x-2*y-3*z
+  return(fx)
+}
+# derivative of fx
+fx.d <- function(theta){ # if derivative still has x,y,z, make x<- theta[1] etc...
+  c(-2,-2,-3)
+}
+constrOptim(init,fx, grad=fx.d,ui=ui,ci=ci)
+
+
+
+
+
+
+
+
+
+
+```
+
+
+```{r}
+# another problem:
+# f(x,y)=log(x)+log(y)
+
+
+ui <- matrix(c(-1,-2,-3,-1,1,0,0,1), byrow = T,nrow=4)
+ci <- c(-10,-12,0,0)
+
+init <- c(1,1)
+
+fx <- function(theta){
+  x <- theta[1]
+  y <- theta[2]
+  fx <- -log(x)-log(y)
+  return(fx)
+}
+
+fxd <- function(theta){
+  x <- theta[1]
+  y <- theta[2]
+  c(-1/x,-1/y)
+}
+
+
+constrOptim(init,fx,fxd,ui,ci)
+
+
+
+
+```
+
+
+
+```{r}
+# constrained optimization (linear)
+
+ui <- matrix(c(-1,-2,-3,-1,1,0,0,1), byrow=T,nrow=4)
+ci <- c(-10,-12,0,0)
+
+initial <- c(1,1)
+
+fx <- function(theta){
+  x <- theta[1]
+  y <- theta[2]
+  fx <- -log(x)-log(y)
+  return(fx)
+}
+
+fx.d <- function(theta){
+  x <- theta[1]
+  y <- theta[2]
+  c(-1/x,-1/y)
+}
+
+constrOptim(initial,fx,fx.d,ui=ui,ci=ci)
+
+```
+
+
+
+#Montecarlo methods
+```{r}
+# Accept - reject method
+# plot
+
+x <- seq(-5,5,length=100)
+fx <- exp(-x^2/2)*sin(2*x)^2
+
+plot(x,fx,type="l")
+
+
+
+
+
+
+
+
+```
+
+
+
+# Bootstrap methods
+```{r}
+# Bootstrap to understand uncertainty around a particular statistic
+# Bootstrapping means : random sampling(with replacement) from original data, computing statistic on each sample, repeat many times say B=10000, studying this distribution to learn about SE,bias,Confidence intervals.
+# Bootstrap distribution is histogram
+set.seed(123)
+library(MASS)
+gal_data <- galaxies
+
+# statistic we are uncertain about
+med_gal <- median(gal_data)
+
+# 10000 bootstrap
+B <- 10000
+
+# storing samples <- NB
+tboot <- numeric(B)
+
+# for each of the B samples, calculate median galaxy speed
+for(i in 1:B){
+  samples <- sample(gal_data,replace=TRUE) # with replacement
+  tboot[i] <- median(samples)
+  
+}
+
+bias <- mean(tboot)-med_gal
+# 40.2953 - bias estimate - average of 10000 medians - true median
+
+se<- sd(tboot)
+# 514.9369
+# Standard error always stays the same, changing B will only affect monte carlo error.
+
+
+# Plotting bootstrap distribution
+
+hist(tboot,breaks=50, main = "bootstrap medians")
+# adding true median
+abline(v=med_gal,lty=2,col="red")
+
+
+```
+
+
+
+```{r}
+# Percentile confidence interval 95% <- most common
+percentile <- quantile(tboot,c(0.025,0.975))
+
+percentile
+
+# Basic bootstrap confidence interval
+
+bbci <- 2*med_gal - quantile(tboot,c(0.975,0.025))
+bbci
+
+
+
+# Normal confidence interval(95%)
+# true median +- z*se
+nci_lower <- med_gal - 1.96*se
+nci_upper <- med_gal + 1.96*se
+normal_ci <- c(nci_lower,nci_upper)
+
+hist(tboot,breaks=50, main = "bootstrap medians")
+# adding true median
+abline(v=med_gal,lty=2,col="red")
+
+# adding percentile
+abline(v=percentile,col="green")
+
+# adding basic bootstrap confidence interval
+
+abline(v=bbci,col="blue")
+
+# adding normal confidence interval
+abline(v = normal_ci, col="orange")
+
+
+
+
+
+```
+
+
+
+```{r}
+# doing the same for mean galaxy speed
+
+mean_gal <- mean(gal_data)
+
+B <- 10000
+tbootmean <- numeric(B)
+
+for(i in 1:B){
+  samp <- sample(gal_data,replace = TRUE)
+  tbootmean[i] <- mean(samp)
+}
+
+bias_mean <- mean(tbootmean)-mean_gal
+
+se <- sd(tbootmean)
+
+hist(tbootmean,breaks=20)
+abline(v=mean_gal,col="green")
+
+pci <- quantile(tbootmean,c(0.025,0.975))
+abline(v=pci,col="red")
+
+bbci <- 2*mean_gal - quantile(tbootmean,c(0.975,0.025))
+abline(v=bbci, col="blue")
+
+nci <- c(mean_gal-1.96*se,mean_gal+1.96*se)
+abline(v=nci,col="orange")
+
+
+```
+
+
+
+```{r}
+
+library(boot)
+gal <- galaxies
+bt.smpls <- boot(gal, function(x, i) median(x[i]), R = 3000)         
+
+# see Venables and Ripley, pg.134
+# take 3000 bootstrap samples, returns the 3000 medians of these
+
+bt.smpls
+summary(bt.smpls)
+
+boot.ci(bt.smpls, type = c("norm", "basic", "perc", "bca"))     # all sorts of confidence intervals
+help(boot.ci)           # bca gives a bias corrected and accelerated 
+                       # (improved) percentile interval
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+# Regression problem
+
+```{r}
+set.seed(123)
+air_data <- airquality
+air_data <- na.omit(airquality)
+
+true_cor <- cor(air_data$Ozone, air_data$Temp)
+
+B <- 10000
+tboot <- numeric(B)
+set.seed(123)
+# rows not columns
+for(i in 1:B){
+  samp_index <- sample(1:nrow(air_data),replace=TRUE)
+  samp <- air_data[samp_index,]
+  tboot[i]<- cor(samp$Ozone,samp$Temp)
+}
+
+#bias, se
+bias <- mean(tboot)-true_cor
+
+se <- sd(tboot)
+
+pci <- quantile(tboot,c(0.025,0.975))
+bbci <- 2*true_cor - quantile(tboot,c(0.975,0.025))
+nci <- c(true_cor-1.96*se,true_cor+1.96*se)
+
+
+hist(tboot,breaks=30)
+abline(v=true_cor,col="yellow")
+abline(v=pci,col="green")
+abline(v=bbci,col="red")
+abline(v=nci,col="black")
+```
+
+
+
+
+```{r}
+
+High <- "55/3338 = 0.0165"
+Low <- "21/2676 = 0.0078"
+RR <- "2.12"
+
+tab <- data.frame(rbind(High, Low, RR))
+row.names(tab) <- c("high", "low", "relative risk")
+
+
+knitr::kable(tab, col.names = c("blood pressure", "cardiovascular disease"))
+
+B <- 10000
+sboot <- numeric(B)
+for(i in 1:B){
+  samp <- sample(tab,replace = TRUE)
+  sboot[i] <- samp$high/samp$low
+}
+
+
+
+
+
+
+
+```
+
+
+# median wind speed
+```{r}
+air_data
+tmedian <- median(air_data$Wind)
+
+B <- 10000
+tboot <- numeric(B)
+
+for(i in 1:B){
+  samp <- sample(1: nrow(air_data),replace = TRUE)
+  samp_ind <- air_data[samp,]
+  tboot[i] <- median(samp_ind$Wind)
+}
+
+mean(tboot)-tmedian
+
+sd(tboot)
+
+
+
+
+
+```
+
+
+
+#Newton method
+```{r}
+# theta^new = theta-(f(theta)/f'(theta))
+# f(theta)= theta^2-2
+# check |theta_new-theta|<tol
+# goal for x^2 - 2 etc... find roots
+f_theta <- function(theta){
+  theta^2-2
+}
+f_prime <- function(theta){
+  2*theta
+}
+# initial guesses
+theta = 1
+max_iter = 100
+tol = 1e-6
+
+for(i in 1:max_iter){
+  theta_new <- theta-(f_theta(theta)/f_prime(theta))
+  if(abs(theta_new-theta)<tol) break
+  theta<-theta_new
+}
+theta_new
+
+
+
+
+```
+
+
+
+
+
+# Newton raphson method:
+```{r}
+# x^new = x-f'(x)/f''(x)
+# used to find minimum/maximum of fx <- optimisation
+f_p <- function(x){
+  7-(1/x)
+}
+f_i <- function(x){
+  1/(x^2)
+}
+x <- 0.1
+tol <- 1e-6
+max_iter <- 100
+for(i in 1:max_iter){
+  x_new <- x - (f_p(x)/f_i(x))
+  if(abs(x_new-x)<tol) break
+  x <- x_new
+}
+
+
+```
+
+# Accept reject method
+
+```{r}
+# f(x) <- target 
+# h(x) <- proposal
+# C <- constant
+# finding C, such that f(x)<=C.h(x) for all x
+# solve (f(x))/h(x) and find maximum
+
+# plotting f(x)
+
+x <- seq(-5,5,length=100)
+fx <- exp(-x^2/2)*sin(2*x)^2
+plot(x,fx,type="l")
+
+# finding normal distribution that would be suitable candidate distribution
+# use graph
+# so constant C
+lines(x,3*dnorm(x))
+
+# target distribution
+f <- function(x){
+  exp(-x^2/2)*sin(2*x)^2
+  }
+
+# proposal distribution
+g <- function(x){
+  dnorm(x,0,1)
+}
+
+
+
+
+
+
+
+```
+
+
+```{r}
+# f(x) <= c.h(x) for all x
+# target
+f <- function(x){
+  exp(-x^2/2)*sin(2*x)^2
+}
+# candidate - find normal distribution that qualifies as candidate, so find C essentially, where f<=C.h
+h <- function(x){
+  dnorm(x,0,1)
+}
+x <- seq(-5,5,length=100)
+# f(x)/g(x) to find suitable X
+ratio <- f(x)/h(x)
+C <- max(ratio,na.rm=TRUE)
+
+plot(x,f(x), type="l")
+lines(x,C*h(x))
+
+
+
+
+```
+
+
+```{r}
+
+# ACCEPT REJECT METHOD
+# f(x) <= c.h(x) for all x
+# target
+set.seed(123)
+f <- function(x){
+  exp(-x^2/2)*sin(2*x)^2
+}
+# candidate - question says find normal distribution that qualifies as candidate, so find C essentially, where f<=C.h
+h <- function(x){
+  dnorm(x,0,1)
+}
+x <- seq(-5,5,length=100)
+# f(x)/h(x) to find suitable C
+ratio <- f(x)/h(x)
+C <- max(ratio,na.rm=TRUE)
+plot(x,f(x), type="l")
+lines(x,C*h(x))
+
+# Generating values from proposal distribution and uniform(0,1)
+set.seed(123)
+N <- 10000 # total candidate samples
+candidate_samples <- rnorm(N,0,1)
+u <- runif(N,0,1)
+g <- f(candidate_samples)/(C*h(candidate_samples))
+accepted <- candidate_samples[u<=g]
+# plotting original function over histogram
+fx <- exp(-x^2/2)*sin(2*x)^2
+hist(accepted,breaks=80, freq= F,ylim=c(0,1))
+lines(x,fx,col="blue")
+
+# finding perfect fit 
+library(pracma)
+Z <- trapz(x,f(x)) # normalize F
+f_normalized <- f(x)/Z
+hist(accepted, breaks=80, freq=F, ylim=c(0,1))
+lines(x,f_normalized, col="red")
+
+# acceptance rate
+nr_accepted <- length(accepted)
+acceptance_rate <- length(accepted)/N
+
+
+
+```
+
+
+
+```{r}
+# accept reject practice
+set.seed(123)
+f <- function(x){
+  1/(1+x^2)*(cos(3*x))^2
+}
+
+h <- function(x){
+  dnorm(x,0,1)
+}
+
+x <- seq(-5,5,length=100)
+
+
+# finding C
+ratio <- f(x)/h(x)
+C <- max(ratio,na.rm=TRUE)
+
+
+plot(x,f(x), type="l", col="blue")
+lines(x,C*h(x))
+
+N <- 1000000
+cand_samples <- rnorm(N,0,1)
+u <- runif(N,0,1)
+g <- f(cand_samples)/(C*h(cand_samples))
+accepted <- cand_samples[u<=x]
+
+hist(accepted,breaks=80,freq=F,ylim=c(0,1))
+lines(x,f(x), col="red")
+
+Z <- trapz(x,f(x))
+f_norm <- f(x)/Z
+
+lines(x,f_norm,col="green")
+
+n <- length(accepted)/N
+
+```
+
+
+
+```{r}
+# Probability integral transform method
+# steps:
+# 1: Find CDF (integrate, 0 to x)
+# 2: Inverse CDF (make x=...) - do these 2 steps by hand, set u=CDF
+# try get 1-u rather than u-....
+# 3: simulate random numbers from U(0,1)
+# Example:  Generate values from an exponential distribution with λ = 2, using the probability
+# integral transform. Make appropriate plots to check that this has worked.
+set.seed(123)
+N <- 10000
+u <- runif(N,0,1)
+x <- (log(1)-log(u))/2 # inverse cdf
+# plot
+hist(x,breaks=100,freq=FALSE)
+# true density overlapping plot
+curve(dexp(x,rate=2), from=0, to=max(x), add=TRUE)
+
+
+
+
+
+
+
+
+```
+
+
+
+```{r}
+# another example
+set.seed(123)
+N <- 10000
+u <- runif(N,0,1)
+x <- -log((1-u)/u)
+hist(x,breaks=100,freq=F)
+curve(dlogis(x,0,1), from=min(x), to=max(x), add=TRUE, col="red")
+
+
+
+
+```
+
+
+
+
+```{r}
+# Importance sampling method
+# each x= inverse of CDF(CDF from 0 to x), solve in terms of u like for probability integral
+# each weight = 1/fi(xi)
+# Example: estimate h(x) <-  integral(exp(-x)/(1+x^2)) from 0 to 1 using importance sampling
+# compare estimates and se using these importance functions
+# f0(x)=1 0<x<1, f1(x)=exp(-x) 0<x<inf, f3(x)= exp(-x)/(1-exp(-1)) 0<x<1
+h <- function(x){
+  exp(-x)/(1+x^2)
+}
+integration <- integrate(h,lower=0,upper=1) # true value
+
+f0 <- 1
+f1 <- function(x){
+  exp(-x)
+}
+f3 <- function(x){
+  exp(-x)/(1-exp(-1))
+}
+x <- seq(0,1,length=100)
+plot(x,h(x),type="l", col="red")
+lines(x,f1(x), col="pink")
+lines(x,f3(x), col = "orange")
+lines(x,rep(1,times=100), col="black") #f0, times=length
+N <- 10000
+u <- runif(N,0,1) # always make x in terms of u(0,1)
+x0 <- u
+weight_0 <- 1/1 #usually 1/fi(xi), but since f0(x)=1, then for all u = 1
+int0 <- mean(h(x0)*weight_0)
+int0var <- var(h(x0)*weight_0)/N
+int0sd <- sqrt(int0var)
+x1 <- -log(1-u)
+weight_1 <- 1/f1(x1)
+int1 <- mean(h(x1)*(x1<1)*weight_1) # because 0<x<1
+int1var <- var(h(x1)*weight_1)/N
+int1sd <- sqrt(int1var)
+x3 <- -log(1-u+u*exp(-1))
+weight_3 <- 1/f3(x3)
+int3 <- mean(h(x3)*weight_3)
+int3var <- var(h(x3)*weight_3)/N
+int3sd <- sqrt(int3var)
+
+
+```
+
+
+
+```{r}
+
+# Random sums skeleton code
+set.seed(123)
+generate_N <- function(M){
+  rnbinom(M,20,0.5)
+}
+
+generate_sum_S <- function(N,lambda=1, rate=0.5){
+  S <- numeric(length(N))
+  idx <- N>0
+  S[idx] <- rexp(sum(idx), rate=rate)
+  return(S)
+}
+
+C <- 50
+M <-1000
+N <- generate_N(M)
+S <- generate_sum_S(N)
+
+mean(S)
+
+
+
+```
+
+
+```{r}
+# Monte carlo integration method
+# Example: f(x)= 1/(1+sinh(2x)*(log(x)^2)) 
+# on interval 0.8<x<3, find monte carlo error of estimate
+f <- function(x){
+  1/(1+sinh(2*x)*(log(x))^2)
+}
+integrated <- integrate(f,lower=0.8,upper=3)
+N <- 10000
+u <- runif(N,0.8,3)
+fmean <- mean(f(u))
+int.estimate <- fmean*(3-0.8) #upper-lower
+int.var <- var(f(u))/N * (3-0.8)^2
+int.se <- sqrt(int.var)
+
+
+
+
+
+
+
+
+
+```
+
+
+```{r}
+# Monte carlo integration
+set.seed(1)
+f <- function(x){
+  (cos(50*x)+sin(20*x))^2}
+int <- integrate(f,0,1)
+N <- 10000
+u <- runif(N,0,1)
+fmean <- mean(f(u))
+int.est <- 1*fmean
+int.est
+int.var <- var(f(u))/N * 1
+int.se <- sqrt(int.var)
+int.se
+```
+
+
+```{r}
+# Pi estimate method
+# example: finding monte carlo estimate(error) of pi
+# with N=1000 generated points
+N <- 1000
+x <- runif(N,0,1)
+y <- runif(N,0,1)
+# inside circle
+inside <- sum(x^2 + y^2<1)
+p.hat <- inside/N
+(pihat.est <- p.hat * 4)
+pi.se <- sqrt(p.hat*(1-p.hat)/N * 16) #4^2
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+```{r}
+# Discrete inverse transform sampling method
+# use runif
+# Example: p(x)= 0.4 x= turn left, 0.5 x= turn right, 0.1 x = stay
+# Define actions and their probabilities
+actions <- c("1", "2", "3", "4")
+probs <- c(0.1,0.3,0.4,0.2)
+# Compute CDF
+cdf <- cumsum(probs)
+# Sampling function using inverse transform
+sample_action <- function(){
+  u <- runif(1)
+  return(actions[which(u <= cdf)[1]])
+}
+# Generate 1000 samples
+N <- 1000
+set.seed(42)
+samples <- replicate(N, sample_action())
+# View relative frequencies
+table(samples) / N
+# Plot frequencies
+barplot(table(samples)/N)
+
+
+
+
+```
+
+
+```{r}
+# Antithetic sampling method
+# Example: use Monte Carlo integration to estimate, integral x^2, from 0 to 1
+# Find monte carlo error with N = 1000, then use antithetic sampling
+# Step 1: Define integral and sampling range.
+# Step 2: Simulate N samples and compute Monte Carlo estimate and standard error.
+# Step 3: Do the same using antithetic pairs (u,1−u),use N/2.
+f <- function(x){
+  x^2
+}
+integration <- integrate(f,0,1)
+N <- 1000
+u <- runif(N,0,1)
+fmean <- mean(f(u))
+fmean.est <- fmean * (1-0) # upper-lower
+var.est <- var(f(u))/N * (1-0)^2
+sd.est <- sqrt(var.est)
+# Now N/2 pairs of antithetic variables - ALWAYS N/2
+u <- runif(N/2,0,1)
+f_u <- u^2 # because f(x)=x^2
+f_antithetic <- (1-u)^2  #x becomes (1-u)
+# Ave antithetic pairs
+f_avg <- (f_u + f_antithetic)/2
+antithethic_est <- mean(f_avg) * (1-0) # upper - lower
+antithetic_var <- var(f_avg)/(N/2) * (1-0)^2 # (upper-lower)^2
+antithetic_se <- sqrt(antithetic_var)
+
+
+
+
+
+
+
+
+```
+
+
+```{r}
+# e^x
+# Antithetic sampling
+f <- function(x){
+  exp(-x)
+}
+N <-1000
+u <- runif(N,0,1)
+fmean.est <- mean(f(u))*(1-0)
+var.est <- var(f(u))/N
+sd.est <- sqrt(var.est)
+# Now antithetic pairs
+u <- runif(N/2,0,1)
+f_u <- exp(-u)
+f_antithetic <- exp(-(1-u))
+favg <- (f_u + f_antithetic)/2
+fmeanest <- mean(favg)
+fvarest <- var(favg)/(N/2)
+fse <- sqrt(fvarest)
+
+```
+
+```{r}
+# MCMC method
+# Example: f(x) = 10exp(−4(x+ 4)^2) + 3exp(−0.2(x+ 1)^2) + exp(−2(x−5)^2)
+# Use the Metropolis algorithm to sample from f(x) using g(x)
+# X∼U(−1,1) as proposal distribution and N = 5000.
+# Define unnormalized target function
+fx <- function(x) {
+  10 * exp(-4 * (x + 4)^2) + 
+   3 * exp(-0.2 * (x + 1)^2) + 
+       exp(-2 * (x - 5)^2)
+}
+# Plot the function
+xrange <- seq(-10, 10, length = 1000)
+plot(xrange, fx(xrange), type = "l")
+# Metropolis sampler 
+N <- 5000
+xi <- numeric(N)
+xi[1] <- 0 
+for (i in 2:N) {
+  prop <- xi[i - 1] + runif(1, -1, 1)  # symmetric proposal
+  # if proposal~N(x,sigma^2), then prop <- rnorm(1,xi[i-1], sd=proposal_sd)
+  p.acc <- fx(prop) / fx(xi[i - 1])
+  
+  # Accept/reject rule
+  if (runif(1) < min(1, p.acc)) {
+    xi[i] <- prop
+  } else {
+    xi[i] <- xi[i - 1]
+  }
+}
+# Estimate area under the curve (normalizing constant)
+u <- runif(10000, -10, 10)
+area_est <- mean(fx(u)) * 20
+area_est
+# Plot
+hist(xi, breaks = 50, freq = FALSE)
+lines(xrange, fx(xrange) / area)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+```{r}
+# Parallel computing
+dat <- rexp(50,1)
+set.seed(1)
+med <- median(dat)
+B <- 1000
+tboot <- numeric(B)
+
+for(i in 1:B){
+  samp <- sample(dat,replace=TRUE)
+  tboot[i] <- median(samp)
+}
+
+bias <- mean(tboot)-med
+se <- sd(tboot)
+
+hist(tboot,freq=F, breaks = 100)
+
+
+```

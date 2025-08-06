@@ -1,0 +1,195 @@
+---
+title: "CA 7"
+output: pdf_document
+date: "2025-04-09"
+---
+
+```{r}
+
+# Loading package
+if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
+remotes::install_github("MiguelRodo/DataTidy23RodoHonsMult@2024")
+library(DataTidy23RodoHonsMult)
+data("data_tidy_mali")
+
+# View dataset structure
+str(data_tidy_mali)
+
+# Question 1: Scatterplots and Outlier Removal
+
+# Load libraries
+library(ggplot2)
+library(dplyr)
+
+
+# Plot 1: Family vs Distance to Road
+ggplot(data_tidy_mali, aes(x = dist_rd, y = family)) + 
+  geom_point() + 
+  theme_minimal() +
+  ggtitle("Family Size vs Distance to Road")
+
+# Plot 2: Distance to Road vs Cattle
+ggplot(data_tidy_mali, aes(x = dist_rd, y = cattle)) + 
+  geom_point() + 
+  theme_minimal() +
+  ggtitle("Distance to Road vs Cattle")
+
+# Remove outliers visually 
+mali_clean <- data_tidy_mali %>%
+  filter(dist_rd <= 60, cattle <= 150)
+
+
+
+```
+
+
+
+
+```{r}
+
+# Question 2: Standardisation Need
+
+# Examine summary statistics
+summary(mali_clean)
+
+# COMMENT:
+# Variables are on different scales (for example: family is 5-145, dist-rd is 0-41 etc...), 
+# so PCA using the correlation matrix is more appropriate than the covariance matrix.
+
+
+
+```
+
+
+```{r}
+
+# Question 3: PCA using Correlation Matrix 
+
+# Standardize data
+X <- scale(mali_clean[, c("family", "dist_rd", "cotton", "maize", "sorg", 
+                          "millet", "bull", "cattle", "goats")])
+
+# Correlation matrix
+R <- cor(X)
+
+# Eigen decomposition
+eig <- eigen(R)
+# Eigenvalues
+eig$values  
+# Loadings
+eig$vectors 
+
+# Scree plot
+plot(eig$values, type = "b", xlab = "Component", ylab = "Eigenvalue",
+     main = "Scree Plot")
+
+# Cumulative proportion 
+cumsum(eig$values) / sum(eig$values)
+
+# COMMENT:
+# First 2-3 components explain most of variance (72-82%)
+
+
+
+
+
+
+```
+
+
+
+
+
+```{r}
+
+# Question 4: PCA using SVD
+
+# SVD of standardized matrix
+X_svd <- svd(X)
+
+# Compare eigenvalues:
+eigval_svd <- X_svd$d^2 / (nrow(X) - 1)
+round(eigval_svd, 4)
+round(eig$values, 4)
+
+# COMMENT:
+# Eigenvalues from SVD match those from correlation matrix which therefore confirms correct PCA.
+
+
+```
+
+
+
+
+
+
+```{r}
+
+# Question 5: Interpret First 2 Principal Component
+
+loadings <- eig$vectors
+colnames(loadings) <- paste0("PC", 1:ncol(loadings))
+rownames(loadings) <- colnames(X)
+round(loadings[, 1:2], 3)
+
+# COMMENT:
+# PC1: Household activity has a general magnitude as all are negative loadings
+# PC2: Contrasts road distance, maize and cotton with cattle, sorg and goats
+# which potentially reflects a difference in farming strategy or geographic seperation
+
+
+
+
+```
+
+
+
+
+
+```{r}
+
+
+# Question 6: Correlations with PC1 vs Loadings 
+
+# Scores for PCs
+PC_scores <- X %*% eig$vectors
+
+# Correlation between PC1 and original variables
+cor_PC1 <- cor(PC_scores[,1], X)
+round(cor_PC1, 3)
+
+# Compare to PC1 loadings
+round(loadings[,1], 3)
+
+# COMMENT:
+
+# The loadings are closely mirrored in both direction and relative strength by 
+# the correlations between PC1 and the original variables. Given that PCA was based 
+# on the correlation matrix, this is to be expected.
+
+
+
+
+
+
+```
+
+
+
+```{r}
+
+# Question 7: Biplot
+
+# Biplot using first 2 PCs
+biplot(prcomp(X), scale = 0, main = "PCA Biplot")
+
+# COMMENT:
+# Arrows show directions of variables (loadings). Points represent households.
+# Clustering and directionality helps visualise variation patterns.
+
+
+
+
+
+```
+

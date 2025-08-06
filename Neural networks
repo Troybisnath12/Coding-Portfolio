@@ -1,0 +1,315 @@
+---
+title: "Analytics Assignment 2"
+author: "Thashin Pillay & Troy Bisnath"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  pdf: default
+---
+\newpage
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+dat = read.table("Collider_Data_2025.txt", h = TRUE,stringsAsFactors =TRUE)
+dim(dat)
+library(ggplot2)
+library(knitr)
+library(dplyr)
+library(tinytex)
+```
+
+### Question 1a
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+dat <- dat|>
+  mutate(Class = case_when(
+    Y1 == 1 ~ "alpha",
+    Y2 == 1 ~ "beta",
+    Y3 == 1 ~ "rho"
+  ),
+  Detector = factor(X3, levels = c(0, 1), labels = c("Type B", "Type A"))
+         )
+
+dat$Class <- factor(dat$Class,levels = c("alpha","beta","rho"))
+
+ggplot(dat, aes(x = X1, y = X2, color = Class, shape = Detector))+
+  geom_point(size = 2.5, alpha = 0.8) +
+  labs(
+    title = "Collider Particles by Class and Detector Type",
+    x = "First Coordinate in Cross Section",
+    y = "Second Coordinate in Cross Section",
+    color = "Particle Type Found",
+    shape = "Detector Type")+
+  theme_minimal()+
+  coord_fixed(ratio = 1)
+```
+
+**Comments**: Non linear machinery such as Neural Networks works in scenarios where a recursive operation that leads to a non-linear mapping of a set of inputs to a set of outputs is needed. In this case, the input coordinates as well as the detector type may have a non-linear relationship to the type of particle found as seen from the plot. There are curves as well as overlaps which means a linear model may have difficulties with appropriate mapping and predictions for the decision boundaries amongst the type of particles. A neural network would generally succeed much more with determining this non-linear decision boundary but there is no reason to believe it would completely outperform other types of non-linear models without testing.
+
+### Question 1b- Softmax function
+
+```{r}
+softmax <- function(Z){
+  expZ <- exp(Z-apply(Z, 1, max))
+  prob <- expZ/(rowSums(expZ))
+  return(prob)
+}
+```
+
+### Question 1c
+
+```{r}
+Ci <- function(y_i, yhat_i) {
+  if (y_i[1] == 1) {
+    return(-log(yhat_i[1]))
+  } else if (y_i[2] == 1) {
+    return(-log(yhat_i[2]))
+  } else if (y_i[3] == 1) {
+    return(-log(yhat_i[3]))
+  } else {
+    stop("Error in coding")
+  }
+}
+```
+
+$$
+\text{For numerical purposes, it is easier and makes more statistical sense to evaluate only the relevant term. } 
+$$
+
+$$\log(\hat{y}_{ij})$$ is avoided for classes where it is not needed or applicative to the output, which may be undefined or yield $$-\infty$$ when $$\hat{y}_{ij} \approx 0$$.
+
+It simplifies the computation and improves efficiency, since the full sum $$\sum_{j=1}^3 y_{ij} \log(\hat{y}_{ij})$$ is not needed when only one term is non-zero.
+
+This matches the structure of encoded labels, where only one class is active for each observation. It also helps avoid problems when predicted probabilities like $$\hat{y}_{ij}$$ are extremely small.
+
+### Question 1d
+
+```{r}
+loss <- function(Yhat, Y) {
+  -mean(rowSums(Y * log(Yhat)))
+}
+
+```
+
+### Question 1e
+
+$$
+\text{Total number of parameters in an } (m, m)\text{-AFnetwork with } p \text{ inputs and } q \text{ outputs is:}
+$$
+
+
+$$
+\underbrace{mp}_{\text{input-to-hidden weights}} +
+\underbrace{m}_{\text{hidden layer biases}} +
+$$
+$$
+\\ \underbrace{m^2}_{\text{hidden-to-augmented weights}}+
+\underbrace{m}_{\text{augmented layer biases}} +
+$$
+$$
+\\ \underbrace{q(p + m)}_{\text{final layer weights (augmented inputs)}} +
+\underbrace{q}_{\text{output layer biases}}.
+$$
+
+
+$$
+\text{Therefore, total parameters} = mp + m^2 + 2m + qp + qm + q.
+$$
+
+### Question 1f
+
+```{r}
+AFnetwork <- function(X, Y, theta, m, nu) {
+  N <- nrow(X)
+  p <- ncol(X)
+  q <- ncol(Y)
+
+  # === Unpack parameters ===
+  index <- 1:(m * p)
+  W1 <- matrix(theta[index], nrow = p, ncol = m)
+
+  index <- max(index) + 1:(m * m)
+  W2 <- matrix(theta[index], nrow = m, ncol = m)
+
+  index <- max(index) + 1:m
+  b1 <- matrix(theta[index], nrow = 1, ncol = m)
+
+  index <- max(index) + 1:m
+  b2 <- matrix(theta[index], nrow = 1, ncol = m)
+
+  index <- max(index) + 1:((p + m) * q)
+  W3 <- matrix(theta[index], nrow = p + m, ncol = q)
+
+  index <- max(index) + 1:q
+  b3 <- matrix(theta[index], nrow = 1, ncol = q)
+
+  # === Forward pass ===
+
+  # Hidden layer
+  Z1 <- X %*% W1 + matrix(rep(b1, N), nrow = N, byrow = TRUE)
+  A1 <- tanh(Z1)
+
+  # Augmented hidden layer
+  Z2 <- A1 %*% W2 + matrix(rep(b2, N), nrow = N, byrow = TRUE)
+  A2 <- tanh(Z2)
+
+  # Augmented input: X and A2 side by side
+  Aug <- cbind(X, A2)  # N x (p + m)
+
+  # Output layer
+  Z3 <- Aug %*% W3 + matrix(rep(b3, N), nrow = N, byrow = TRUE)
+
+  # Softmax output
+  Yhat <- softmax(Z3)
+
+  # Loss (cross-entropy)
+  E1 <- loss(Yhat, Y)
+
+  # L2 regularization on weights only
+  penalty <- sum(W1^2) + sum(W2^2) + sum(W3^2)
+  E2 <- E1 + nu * penalty
+  
+  
+  return(list(Yhat = Yhat, E1 = E1, E2 = E2))
+}
+
+
+```
+
+Question 1g
+
+```{r}
+# Load the dataset again
+dat <- read.table("Collider_Data_2025.txt", header = TRUE)
+
+# Extract modeling variables 
+X <- as.matrix(dat[, c("X1", "X2", "X3")])  
+Y <- as.matrix(dat[, c("Y1", "Y2", "Y3")])  
+
+
+set.seed(2025)
+N <- nrow(X)
+train_index <- sample(1:N, size = round(0.8 * N))
+valid_index <- setdiff(1:N, train_index)
+
+X_train <- X[train_index, ]   
+Y_train <- Y[train_index, ]
+
+X_valid <- X[valid_index, ]   
+Y_valid <- Y[valid_index, ]
+
+# Model dimensions
+p <- ncol(X)
+q <- ncol(Y)
+m <- 4
+
+
+n_params <- m * p + m^2 + 2 * m + q * (p + m) + q
+
+# Regularization values
+nu_values <- exp(seq(-6, 2, length.out = 25))
+val_errors <- numeric(length(nu_values))
+
+# Initialize parameters
+set.seed(2025)
+theta0 <- runif(n_params, min = -0.1, max = 0.1)
+
+
+
+for (i in seq_along(nu_values)) {
+  nu <- nu_values[i]
+
+  # Train model on training set
+  fit <- optim(
+    theta0,
+    fn = function(theta) AFnetwork(X_train, Y_train, theta, m, nu)$E2,
+    method = "BFGS",
+    control = list(maxit = 500)
+  )
+
+  theta_hat <- fit$par
+  # Validate on validation set
+  val_result <- AFnetwork(X_valid, Y_valid, fit$par, m, nu)
+  val_errors[i] <- val_result$E1  
+}
+
+best_i <- which.min(val_errors)
+best_nu <- nu_values[best_i]
+best_log_nu <- log(best_nu)
+best_loss <- val_errors[best_i]
+
+
+# Plotting
+plot(log(nu_values), val_errors, type = "b", pch = 19,
+     xlab = "log(v)", ylab = "Validation Cross-Entropy Loss",
+     main = "Validation Loss vs Regularization (v)")
+abline(v = best_log_nu, col = "red", lwd = 2, lty = 2)
+
+
+
+cat("Best v:", best_nu, "Log(v):", best_log_nu, "Loss:", best_loss)
+
+
+```
+
+Based on the validation process we find the most appropriate v to be: This value minimizes our Loss function so we use this to maximize our efficiency.
+
+Question 1h
+
+```{r}
+# Create sequences for plotting response curves
+x1_vals <- seq(min(X[, "X1"]), max(X[, "X1"]), length.out = 100)
+x2_vals <- seq(min(X[, "X2"]), max(X[, "X2"]), length.out = 100)
+
+x2_fixed <- median(X[, "X2"])
+x1_fixed <- median(X[, "X1"])
+
+
+probs_X1_A <- matrix(NA, nrow = 100, ncol = 3)
+probs_X1_B <- matrix(NA, nrow = 100, ncol = 3)
+probs_X2_A <- matrix(NA, nrow = 100, ncol = 3)
+probs_X2_B <- matrix(NA, nrow = 100, ncol = 3)
+
+# Vary X1, fix X2 and detector (X3)
+for (i in seq_along(x1_vals)) {
+  input_A <- matrix(c(x1_vals[i], x2_fixed, 1), nrow = 1)
+  input_B <- matrix(c(x1_vals[i], x2_fixed, 0), nrow = 1)
+
+  probs_X1_A[i, ] <- AFnetwork(input_A, matrix(0, 1, 3), theta_hat, m, best_nu)$Yhat
+  probs_X1_B[i, ] <- AFnetwork(input_B, matrix(0, 1, 3), theta_hat, m, best_nu)$Yhat
+}
+
+# Vary X2, fix X1 and detector (X3)
+for (i in seq_along(x2_vals)) {
+  input_A <- matrix(c(x1_fixed, x2_vals[i], 1), nrow = 1)
+  input_B <- matrix(c(x1_fixed, x2_vals[i], 0), nrow = 1)
+
+  probs_X2_A[i, ] <- AFnetwork(input_A, matrix(0, 1, 3), theta_hat, m, best_nu)$Yhat
+  probs_X2_B[i, ] <- AFnetwork(input_B, matrix(0, 1, 3), theta_hat, m, best_nu)$Yhat
+}
+
+
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+# Plot 1: Varying X1 for Detector A
+matplot(x1_vals, probs_X1_A, type = "l", lty = 1, col = 2:4, lwd = 2,
+        xlab = "X1", ylab = "Predicted Probability", main = "Detector A — Varying X1")
+legend("topright", legend = c("alpha", "beta", "rho"), col = 2:4, lty = 1, lwd = 2)
+
+# Plot 2: Varying X1 for Detector B
+matplot(x1_vals, probs_X1_B, type = "l", lty = 2, col = 2:4, lwd = 2,
+        xlab = "X1", ylab = "Predicted Probability", main = "Detector B — Varying X1")
+legend("topright", legend = c("alpha", "beta", "rho"), col = 2:4, lty = 2, lwd = 2)
+
+# Plot 3: Varying X2 for Detector A
+matplot(x2_vals, probs_X2_A, type = "l", lty = 1, col = 2:4, lwd = 2,
+        xlab = "X2", ylab = "Predicted Probability", main = "Detector A — Varying X2")
+legend("topright", legend = c("alpha", "beta", "rho"), col = 2:4, lty = 1, lwd = 2)
+
+# Plot 4: Varying X2 for Detector B
+matplot(x2_vals, probs_X2_B, type = "l", lty = 2, col = 2:4, lwd = 2,
+        xlab = "X2", ylab = "Predicted Probability", main = "Detector B — Varying X2")
+legend("topright", legend = c("alpha", "beta", "rho"), col = 2:4, lty = 2, lwd = 2)
+
+
+
+
+```

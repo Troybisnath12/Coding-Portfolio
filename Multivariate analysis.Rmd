@@ -1,0 +1,350 @@
+---
+title: "CA8"
+output: pdf_document
+date: "2025-04-17"
+---
+
+```{r setup, include=FALSE}
+
+if (!requireNamespace("remotes", quietly = TRUE)) {
+ install.packages("remotes")
+ }
+ # be sure to install from `2024` branch (code below does this)
+ remotes::install_github("MiguelRodo/DataTidy23RodoHonsMult@2024")
+ data("data_tidy_mali", package = "DataTidy23RodoHonsMult")
+ 
+ if (!requireNamespace("remotes", quietly = TRUE)) {
+  install.packages("remotes")
+}
+remotes::install_github("MiguelRodo/DataTidyRodoSTA2005S")
+
+library(DataTidyRodoSTA2005S)
+data <- data_tidy_yield
+
+
+
+
+```
+
+```{r}
+
+# Question 1a
+#i:
+# Defining Y and X
+Y <- as.matrix(data$CropYield)
+X <- as.matrix(cbind(1, data$SoilPH, data$DistanceToWater))  
+
+# Beta estimate
+XtX_inv <- solve(t(X) %*% X)
+XtY <- t(X) %*% Y
+beta_hat <- XtX_inv %*% XtY
+
+colnames(beta_hat) <- c("Estimate")
+rownames(beta_hat) <- c("Intercept", "SoilPH", "DistanceToWater")
+beta_hat
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+```{r}
+#ii:
+Y_sun <- as.matrix(data$Sunlight)
+X <- as.matrix(cbind(1, data$SoilPH, data$DistanceToWater))  
+beta_sun <- solve(t(X) %*% X) %*% t(X) %*% Y_sun
+colnames(beta_sun) <- c("Estimate")
+rownames(beta_sun) <- c("Intercept", "SoilPH", "DistanceToWater")
+beta_sun
+
+
+
+
+```
+
+
+```{r}
+#iii:
+
+Y_multi <- as.matrix(data[, c("CropYield", "Sunlight")])
+X <- as.matrix(cbind(1, data$SoilPH, data$DistanceToWater))  
+beta_multi <- solve(t(X) %*% X) %*% t(X) %*% Y_multi
+colnames(beta_multi) <- c("CropYield", "Sunlight")
+rownames(beta_multi) <- c("Intercept", "SoilPH", "DistanceToWater")
+beta_multi
+
+
+
+
+
+```
+
+
+
+
+```{r}
+# Question 1b:
+
+# Temp C
+
+X_temp <- as.matrix(cbind(1, data$SoilPH))
+Y_temp <- as.matrix(data$TempC)
+beta_temp <- solve(t(X_temp) %*% X_temp) %*% t(X_temp) %*% Y_temp
+resid_temp <- Y_temp - X_temp %*% beta_temp
+s2 <- sum(resid_temp^2) / (nrow(X_temp) - ncol(X_temp))
+se_soilPH <- sqrt(s2 * solve(t(X_temp) %*% X_temp)[2, 2])
+t_crit <- qt(0.975, df = nrow(X_temp) - ncol(X_temp))
+ci_lower <- beta_temp[2] - t_crit * se_soilPH
+ci_upper <- beta_temp[2] + t_crit * se_soilPH
+
+
+# Temp F
+X_temp_F <- as.matrix(cbind(1, data$SoilPH))
+Y_temp_F <- as.matrix(data$TempF)
+beta_temp_F <- solve(t(X_temp_F) %*% X_temp_F) %*% t(X_temp_F) %*% Y_temp_F
+resid_temp_F <- Y_temp_F - X_temp_F %*% beta_temp_F
+s2_F <- sum(resid_temp_F^2) / (nrow(X_temp_F) - ncol(X_temp_F))
+se_soilPH_F <- sqrt(s2_F * solve(t(X_temp_F) %*% X_temp_F)[2, 2])
+t_crit_F <- qt(0.975, df = nrow(X_temp_F) - ncol(X_temp_F))
+ci_lower_F <- beta_temp_F[2] - t_crit_F * se_soilPH_F
+ci_upper_F <- beta_temp_F[2] + t_crit_F * se_soilPH_F
+
+CI_output <- matrix(data = c(ci_lower,ci_upper, ci_lower_F, ci_upper_F), nrow = 2, ncol = 2,
+                    dimnames = list(c("Lower", "Upper"),
+                                    c("Temp C", "Temp F")))
+CI_output
+
+
+
+```
+
+
+
+```{r}
+#1C
+n <- nrow(X)
+p <- ncol(X)
+RSS_full <- sum((Y - X %*% beta_hat)^2)
+RSS_reduced <- sum((Y - mean(Y))^2)
+F_stat <- ((RSS_reduced - RSS_full) / (p - 1)) / (RSS_full / (n - p))
+p_value_F <- pf(F_stat, df1 = p - 1, df2 = n - p, lower.tail = FALSE)
+
+F_stat_rounded <- round(F_stat, 4)
+p_value_F_rounded <- round(p_value_F, 4)
+F_P_output <- matrix(data = c(F_stat_rounded, p_value_F_rounded), nrow = 2, ncol = 1,
+                     dimnames = list(c("F statistic", "P value"),
+                                     c("Estimate")))
+
+F_P_output
+
+
+
+```
+
+
+```{r}
+#1D:
+
+X_reduced <- as.matrix(cbind(1, data$DistanceToWater))
+beta_reduced <- solve(t(X_reduced) %*% X_reduced) %*% t(X_reduced) %*% Y
+RSS_r <- sum((Y - X_reduced %*% beta_reduced)^2)
+LRT_stat <- n * log(RSS_r / RSS_full)
+p_value_LRT <- pchisq(LRT_stat, df = 1, lower.tail = FALSE)
+LRT_stat_rounded <- round(LRT_stat, 4)
+p_value_LRT_rounded <- round(p_value_LRT, 4)
+
+
+matrix(data = c(F_stat_rounded, p_value_F_rounded), nrow = 2, ncol = 1,
+                     dimnames = list(c("LRT statistic", "P value"),
+                                     c("Estimate")))
+
+
+
+
+
+```
+
+
+
+```{r}
+# Question 2
+
+# Multiple regression
+
+data_mali <- data_tidy_mali
+
+
+y_vector <- as.matrix(data_mali$cotton)
+X_mali <- as.matrix(cbind(1, data_mali[ , !(names(data_mali) %in% "cotton")]))
+
+XtX_inv_mali <- solve(t(X_mali) %*% X_mali)
+XtY_mali <- t(X_mali) %*% y_vector
+beta_hat_mali <- XtX_inv_mali %*% XtY_mali
+
+rownames(beta_hat_mali) <- c("Intercept", colnames(data_mali)[!colnames(data_mali) %in% "cotton"])
+colnames(beta_hat_mali) <- "Estimate"
+
+
+beta_hat_mali
+
+
+
+
+
+
+```
+
+
+
+```{r}
+# PCR
+
+
+# removing rows with NA 
+data_mali <- data_mali[complete.cases(data_mali), ]
+data_mali <- data_mali[apply(data_mali, 1, function(row) all(is.finite(row))), ]
+
+
+y_vector <- as.matrix(data_mali$cotton)
+X_mali <- as.matrix(data_mali[ , !(names(data_mali) %in% "cotton")])
+
+# Standardize X 
+X_scaled <- scale(X_mali)
+
+# SVD
+svd_X <- svd(X_scaled)
+U <- svd_X$u
+S <- diag(svd_X$d)
+V <- svd_X$v
+
+# Principal components
+Z <- U %*% S
+
+# Choosing number of components
+k <- 3
+Z_k <- Z[ , 1:k]
+
+# Intercept
+Z_k <- cbind(1, Z_k)
+
+# Estimate beta for PCR
+beta_pcr <- solve(t(Z_k) %*% Z_k) %*% t(Z_k) %*% y_vector
+
+# predicted y and R-squared
+y_hat <- Z_k %*% beta_pcr
+rss <- sum((y_vector - y_hat)^2)
+tss <- sum((y_vector - mean(y_vector))^2)
+r_squared <- 1 - rss / tss
+
+
+
+
+
+
+```
+
+
+
+```{r}
+
+# PLS
+
+# removing rows with NA 
+data_mali <- data_mali[complete.cases(data_mali), ]
+data_mali <- data_mali[apply(data_mali, 1, function(row) all(is.finite(row))), ]
+
+
+y_vector <- as.matrix(data_mali$cotton)
+X_mali <- as.matrix(data_mali[ , !(names(data_mali) %in% "cotton")])
+
+
+# Centering the data
+X_centered <- scale(X_mali, center = TRUE, scale = FALSE)
+y_centered <- scale(y_vector, center = TRUE, scale = FALSE)
+
+# Number of components
+k <- 3
+
+# Matrices
+n <- nrow(X_mali)
+p <- ncol(X_mali)
+T_mat <- matrix(0, n, k)
+P_mat <- matrix(0, p, k)  
+Q_vec <- matrix(0, k, 1)  
+W_mat <- matrix(0, p, k)  
+
+X_resid <- X_centered
+y_resid <- y_centered
+
+# NIPALS algorithm
+for (i in 1:k) {
+  # weight vector
+  w <- t(X_resid) %*% y_resid
+  w <- w / sqrt(sum(w^2))
+  W_mat[, i] <- w
+  
+  # score vector
+  t_comp <- X_resid %*% w
+  T_mat[, i] <- t_comp
+  
+  # X loading
+  p <- t(X_resid) %*% t_comp / sum(t_comp^2)
+  P_mat[, i] <- p
+  
+  # Y loading
+  q <- as.numeric(t(y_resid) %*% t_comp / sum(t_comp^2))
+  Q_vec[i, 1] <- q
+  
+  # deflation
+  X_resid <- X_resid - t_comp %*% t(p)
+  y_resid <- y_resid - t_comp * q
+}
+
+# Regression of y 
+T_with_intercept <- cbind(1, T_mat[, 1:k])
+beta_pls <- solve(t(T_with_intercept) %*% T_with_intercept) %*% t(T_with_intercept) %*% y_vector
+
+# Prediction and R-squared
+y_hat_pls <- T_with_intercept %*% beta_pls
+tss_pls <- sum((y_vector - mean(y_vector))^2)
+rss_pls <- sum((y_vector - y_hat_pls)^2)
+r_squared_pls <- 1 - rss_pls / tss_pls
+
+
+comparison_PCR_PLS <- matrix(data=c(r_squared, r_squared_pls), nrow = 2, ncol = 1,
+                             dimnames = list(c("PCR", "PLS"),
+                                             c("Estimate using 3 components")))
+
+comparison_PCR_PLS
+
+
+# PCR performed better
+# Likely due to principal components aligning better with structure of PCR outcome variable
+# PLS performs better when there is a stronger linear relationship between predictors and the response, but herePCR components were more effective
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

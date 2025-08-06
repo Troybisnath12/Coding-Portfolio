@@ -1,0 +1,601 @@
+---
+title: "Likelihood exam"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+bibliography: packages-2.bib
+date: "2025-06-21"
+---
+
+
+### Introduction:
+This report uses a Weibull regression model to examine patient survival durations in a clinical trial for melanoma. The censoring indicator (cens), variables (sex and age), and survival time (survtime) are all included in the dataset. Our technique analyses model fit, determines parameter importance, estimates maximum likelihood for both full and approximation likelihoods, and interprets effects using confidence intervals and profile likelihood.
+
+```{r echo=FALSE}
+library(tinytex)
+
+data <- read.table("survival_data.txt", header = TRUE, stringsAsFactors = FALSE)
+
+# Dropping perform
+data <- data[, c("survtime", "survcens", "age", "sex")]
+
+# Removing rows with any missing values
+data <- subset(data, survtime != "." & age != "." & sex != "." & survtime > 0)
+
+# Converting age and sex to numeric
+data$age <- suppressWarnings(as.numeric(data$age))
+data$sex <- suppressWarnings(as.numeric(data$sex))
+
+
+data <- data[complete.cases(data), ]
+
+
+
+# Recode sex: 0 = female, 1 = male
+data$sex <- ifelse(data$sex == 2, 1, 0)
+
+
+
+# Indicator for censoring (0=not censored, 1=censored)
+data$cens <- ifelse(data$survcens == 1, 1, 0)
+
+
+
+
+
+```
+The dataset had been checked for erroneous or useless observations before model fitting. The likelihood function is restricted by one observation's reported survival time of precisely zero since the Weibull density involves $y_i = 0$.
+Since the Weibull density involves $\log(y_i)$ and $y_i^\alpha$, both of which are unstable or undefinable at $y_i=0$, this presents a challenge for the probability function. As a result, this observation was dropped from the dataset.
+On top of that, the age and sex columns had non-numeric placeholders such "." or missing values in a row. Following conversion to numeric types, these entries — which were not interpretable numerically — were eliminated using a mix of string filtering and complete.cases(). After this cleaning step, an overall of 284 valid observations remained and were used. We also recoded sex so that 0 = female, 1 = male.
+
+The survival_data.txt file was used to read the data. We recoded sex (0 = female, 1 = male), eliminated non-positive and missing survival times, and eliminated an unnecessary variable (perform). For censored observations, the censoring indicator was reformulated as cens = 1.
+
+
+### Exploratory data analysis:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(data)
+
+
+
+
+```
+
+The distribution of the survival time (survtime) is right-skewed (mean > median), with a range of around 0.07 to 9.64 years.
+The age range is between 17–79 years old, with an average age of 47.
+The code for the sex variable is 0 for female and 1 for male. About 40% of the data are male, according to the mean of ~0.398.
+0 = observed, 1 = censored is the censoring indication (cens). Approximately 39% of the observations are censored, according to the mean of ~0.387.
+
+
+```{r echo=FALSE}
+
+table(data$cens)
+prop.table(table(data$cens))
+
+
+
+
+
+```
+
+Interpretation of Figure:
+The level of censoring in the dataset is summarised in the above table.
+There are 110 censored observations (where the event time was only known to exceed a specific value) and 174 uncensored observations (where the event was encountered).  
+This translates to around 38.7% censored and 61.3% uncensored data.
+
+Modelling implications:
+The existence of about 39% censoring is non negligible and has to be taken into consideration in likelihood-based models, even though it is not excessive.
+Ignoring censoring can lead to misspecified and biased estimates for likelihoods, such as those based only on density approximations.
+For inference in this dataset, full likelihood techniques that appropriately account for the censoring mechanism are therefore more suitable.
+
+
+```{r echo=FALSE}
+
+table(data$sex)
+prop.table(table(data$sex))
+
+
+```
+
+Interpretation of Figure:
+
+0 indicates female and 1 indicates male for the variable sex.
+113 men (39.8%) and 171 women (60.2%) make up the dataset.
+
+Modelling implications:
+With women making up the bulk of the sample, the sex distribution is somewhat unbalanced.
+When evaluating any predicted impacts of sex on survival time, especially in regression models where sex is a covariate, it is important to take this imbalance into consideration.
+It is simple to include this variable as a covariate impact in the likelihood framework due to its binary traits.
+
+
+```{r echo=FALSE}
+library(dplyr)
+
+data %>%
+  group_by(cens) %>%
+  summarise(
+    count = n(),
+    mean_age = mean(age),
+    sd_age = sd(age),
+    min_age = min(age),
+    max_age = max(age)
+  )
+
+
+```
+
+Interpretation:
+110 people are filtered (event not witnessed), whereas 174 people are uncensored (event noticed).
+The average age of censored persons is 45.6 years (SD = 13.3), which is somewhat younger than the mean age of uncensored individuals, which is 48.0 years (SD = 12.7).
+Uncensored people vary in age from 17.0 to 78.7 years, whereas censored people range in age from 18.5 to 72.3 years.
+
+Implications:
+Although variability (standard deviation) is comparable among groups, censored observations are younger on average.
+The inclusion of age as a covariate in the survival model may be justified by the possibility that there is no strong association between age and the chance of experiencing the event (such as the survival outcome).
+
+
+
+
+
+```{r}
+
+library(ggplot2)
+
+ ggplot(data, aes(x = survtime)) +
+  geom_histogram(binwidth = 5, fill = "blue", color = "red") +
+  labs(title = "Histogram of Survival Time", x = "Survival Time", y = "Count")
+
+
+
+
+```
+Histogram of survival time:
+
+Observation:
+Distribution is biassed to the right.
+The majority of survival periods are short(the bar on the left is the highest).
+Long survival periods are rare for patients.
+
+Interpretation: 
+There is a significant skew in the survival time; majority of people encounter the event early, but fewer survive for a long period of time.  This allows the use of survival models (e.g., Weibull or exponential) and is common in clinical investigations.
+
+
+
+
+
+
+
+
+```{r}
+# Age
+ggplot(data, aes(x = age)) +
+  geom_histogram(binwidth = 2, fill = "darkgreen", color = "yellow") +
+  labs(title = "Histogram of Age", x = "Age", y = "Count")
+
+
+
+
+
+
+
+```
+
+Histogram of age:
+
+Observation: 
+The age range of 20 to 75 is roughly uniformly distributed.  
+The majority of ages fall between 35 and 65.
+At extremes (very young or extremely elderly), counts somewhat decline.
+
+Interpretation:
+There is no significant skewness in the sample, which covers a broad range of adult ages. It is useful for modelling age effects.
+
+
+```{r}
+# Survival time vs censoring
+ggplot(data, aes(x = factor(cens), y = survtime)) +
+  geom_boxplot(fill = c("orange", "pink")) +
+  labs(title = "Survival Time by Censoring Status", x = "Censored (1 = Yes)", y = "Survival Time")
+
+
+```
+
+
+
+
+
+
+
+Boxplot: Survival time vs Censoring
+As anticipated:
+Because they did not pass away during the research, censored individuals often had higher survival periods of time.  
+Uncensored individuals have a lower median survival rate and a higher number of deaths early in life.  
+This supports the hypothesis that longer(unobserved) survival is linked to censoring.
+
+```{r}
+# Age vs censoring
+ggplot(data, aes(x = factor(cens), y = age)) +
+  geom_boxplot(fill = c("purple", "red")) +
+  labs(title = "Age by Censoring Status", x = "Censored (1 = Yes)", y = "Age")
+
+
+```
+
+
+
+
+
+Boxplot: Age vs Censoring
+Uncensored individuals have a higher median age.
+Though somewhat older ages are more linked to uncensored (observed fatalities), spread is similar in both cases.
+
+
+
+
+### Log likelihood:
+```{r echo=FALSE}
+loglikelihood_A <- function(par, y, cens, age, sex) {
+  alpha <- par[1]
+  beta0 <- par[2]
+  beta1 <- par[3]
+  beta2 <- par[4]
+
+  if (alpha <= 0) return(1e10)  # done to prevent invalid alpha
+
+  lambda <- beta0 + beta1 * age + beta2 * sex
+  hazard <- exp(lambda)
+  y_alpha <- y^alpha
+
+  loglik <- ifelse(cens == 0,
+                   log(alpha) + (alpha - 1) * log(y) + lambda - hazard * y_alpha,
+                   -hazard * y_alpha)
+
+  if (any(!is.finite(loglik))) return(1e10)  # done to prevent NaNs
+
+  return(-sum(loglik))
+}
+
+
+
+```
+
+
+
+
+```{r echo=FALSE}
+starting_values <- c(alpha = 1.2, beta0 = 0, beta1 = 0, beta2 = 0)
+
+final_fit <- optim(
+  par = starting_values,
+  fn = loglikelihood_A,
+  method = "BFGS",
+  hessian = TRUE,
+  y = data$survtime,
+  cens = data$cens,
+  age = data$age,
+  sex = data$sex
+)
+
+# Results
+estimate <- final_fit$par
+se <- sqrt(diag(solve(final_fit$hessian)))
+confint <- cbind(Estimate = estimate,
+                 SE = se,
+                 Lower = estimate - 1.96 * se,
+                 Upper = estimate + 1.96 * se)
+print(confint)
+
+
+
+```
+
+#### Weibull Likelihood (Form A)
+
+Based on **Form A** of the Weibull distribution, we calculated the **negative log-likelihood** for a Weibull survival model with censoring using an invented R function. The model has the following structure and uses a linear predictor to account for covariates:
+
+
+
+Let $x_i$ be the corresponding covariate vector (intercept, age, sex), and let $y_i$ represent the observed survival time for subject $i$. The Weibull form A density is:
+
+$$
+f(y_i \mid \alpha, \lambda_i) = \alpha y_i^{\alpha - 1} \exp\left( \lambda_i - e^{\lambda_i} y_i^\alpha \right),
+$$
+
+where:
+- $\alpha > 0$ is shape parameter,
+- $\lambda_i = \beta_0 + \beta_1 \cdot \text{age}_i + \beta_2 \cdot \text{sex}_i$ is the log-linear predictor for the scale.
+
+
+Right-censoring was taken into consideration by piecewise defining the log-likelihood:
+- Uncensored observations($\delta_i = 0$) were subjected to the full density $f(y_i)$.
+- Censored observations($\delta_i = 1$) were subjected to the survival function $S(y_i)$:
+$$
+S(y_i \mid \alpha, \lambda_i) = \exp\left( -e^{\lambda_i} y_i^\alpha \right).
+$$
+
+The resulting log-likelihood for $i$ is:
+$$
+\log L_i =
+\begin{cases}
+\log(\alpha) + (\alpha - 1)\log(y_i) + \lambda_i - e^{\lambda_i} y_i^\alpha, & \text{if } \delta_i = 0 \\
+- e^{\lambda_i} y_i^\alpha, & \text{if } \delta_i = 1
+\end{cases}
+$$
+
+The sum over all $i$ is the overall log-likelihood, and we used the `optim()` function with the `"BFGS"` method to minimise the negative log-likelihood.
+
+ Extra precautions were put in place:
+ - If $\alpha \leq 0$, the function returns a high penalty value.
+ - Penalties similiar to this are applied to any non-finite likelihood components, like those from $\log(0)$ or overflow.
+
+ With this method, all parameters may be estimated using maximum likelihood, suitably taking into consideration both censored and uncensored survival periods. We also ignore 'perform' variable.
+ 
+ The full log-likelihood for the Weibull regression model with right-censoring is:
+
+$$
+\log L(\alpha, \boldsymbol\beta) =
+\sum_{i=1}^{n} \left[
+(1 - \delta_i) \left(
+\log(\alpha) + (\alpha - 1)\log(y_i) + \lambda_i - e^{\lambda_i} y_i^\alpha
+\right)
++ \delta_i \left(
+- e^{\lambda_i} y_i^\alpha
+\right)
+\right],
+$$
+
+where:
+
+- $y_i$ is the observed survival time,
+- $\delta_i$ is the censoring indicator ($\delta_i = 1$ if censored, 0 if observed),
+- $\alpha$ is the shape parameter,
+- $\lambda_i = \beta_0 + \beta_1 \cdot \text{age}_i + \beta_2 \cdot \text{sex}_i$ is the linear predictor,
+- $e^{\lambda_i}$ is the hazard (scale) parameter.
+
+ 
+ 
+Estimate interpretations:
+
+The model was fitted using maximum likelihood estimation based on the correct likelihood definition, which accounts for censoring through the survival function. The table below reports parameter estimates, standard errors (SE), and 95% confidence intervals using the observed Fisher information (inverse of the Hessian). The Wald approach, which uses the observed Fisher Information (inverse of the Hessian matrix) to construct the 95% confidence intervals, was used: estimate ± 1.96 times standard error.
+
+| Parameter               | Estimate |  SE    | 95% CI |
+| $\alpha$ (shape)         | 0.797 | 0.052   | [0.694, 0.899] |
+| $\beta_0$ (intercept)    | -1.856 | 0.300  | [-2.445, -1.267] |
+| $\beta_1$ (age)          | 0.0089 | 0.0056 | [-0.0021, 0.0198] |
+| $\beta_2$ (sex)          | -0.111 | 0.157  | [-0.418, 0.197] |
+
+Only the shape parameter $\alpha$ was statistically significant. The estimated value of $\alpha < 1$ shows a decreasing hazard function over time, which is an indication that early failures are more likely.
+$\beta_1$ - age effect: 
+The log-hazard increases slightly with each extra year of age. The age effect is not statistically significant at the 5% level, because the 95% Confidence interval, includes 0.
+$\beta_2$ - sex effect: 
+Since $\beta_2$ < 0, being male is linked to a lower log-hazard than being female; however, because the 95% CI still includes 0, the sex effect is not statistically significant.
+
+
+Fitting using Density approximation
+```{r echo=FALSE}
+set.seed(123)
+# Density approximation
+loglikelihood_density_approx <- function(par, y, age, sex) {
+  alpha <- par[1]
+  beta0 <- par[2]
+  beta1 <- par[3]
+  beta2 <- par[4]
+  
+  if (alpha <= 0) return(1e10)
+
+  lambda <- beta0 + beta1 * age + beta2 * sex
+  hazard <- exp(lambda)
+  y_alpha <- y^alpha
+
+  loglik <- log(alpha) + (alpha - 1) * log(y) + lambda - hazard * y_alpha
+
+  if (any(!is.finite(loglik))) return(1e10)
+  
+  return(-sum(loglik))
+}
+
+# Subset data: uncensored only
+data_uncens <- subset(data, cens == 0)
+
+# Fit
+densityapprox_fit <- optim(
+  par = starting_values,
+  fn = loglikelihood_density_approx,
+  method = "BFGS",
+  hessian = TRUE,
+  y = data_uncens$survtime,
+  age = data_uncens$age,
+  sex = data_uncens$sex
+)
+
+estimate_density <- densityapprox_fit$par
+
+
+
+
+
+
+
+
+
+
+
+```
+
+This code segment uses only uncensored observations to define and fit a simpler likelihood function - this is known as the density approximation.
+
+### Density Approximation Likelihood
+
+The Weibull model log-likelihood was calculated using only the probability density function, ignoring censoring. The log-likelihood is:
+
+$$
+\log L = \sum_{i=1}^n \left[
+\log(\alpha) + (\alpha - 1) \log(y_i) + \lambda_i - e^{\lambda_i} y_i^\alpha
+\right],
+$$
+
+Software programs (like STATA) occasionally use this likelihood, which can produce accurate estimates when censoring is minimal. But when there is censoring, it is essentially misspecified.
+
+We fitted this model using the BFGS approach using `optim()` and contrasted the outcomes with the full likelihood.
+
+
+Comparing estimates: Density approximation estimates vs correct definition of likelihood esimates
+```{r echo=FALSE}
+
+compare_tbl <- data.frame(
+  Parameter = c("alpha", "beta0", "beta1", "beta2"),
+  Full_Likelihood = round(estimate, 4),
+  Density_Approx = round(estimate_density, 4)
+)
+
+print(compare_tbl)
+
+
+
+
+
+```
+
+Comparing estimates yielded from the correct definition of likelihood approach vs density approximation approach:
+
+Shape parameter $\alpha$: 
+The estimated shape parameter under the entire likelihood is less than 1 (0.7966), suggesting that the hazard is getting smaller with time.
+The opposite behaviour is suggested by the density approximation, where $\alpha$ is > 1 (1.2653), implying an increasing hazard.
+This striking disparity demonstrates how disregarding filtering can distort the underlying pattern of survival.
+
+Intercept $\beta_0$:
+
+The entire model's intercept is -1.86, but the density-only intercept is -0.7786.
+Because the log-hazard scale is anchored by $\beta_0$, its shift indicates the total bias in the hazard function brought on by removing censored data.
+
+
+Age effect $\beta_1$: 
+According to the full likelihood, age has a minor positive effect (0.0089), which is consistent with the idea that hazard increases with age.
+According to the density-only model, the effect is marginally negative (-0.0028).
+The opposite trend suggests that the age censoring was probably not random; the estimate is skewed by leaving out censored data.
+
+Sex effect $\beta_2$:
+Once more, the sign is inverted, going from -0.1107 (males have lower hazard) to +0.0740 (males have higher hazard).
+This demonstrates how covariate relationships can be altered by removing censored observations.
+
+Overall, compared to the complete likelihood, the density approximation produced significantly different parameter estimates, including a reversal in the predicted hazard trend and opposite signs for numerous covariate effects. In modelling survival data, this emphasises how crucial it is to take censoring into consideration.
+
+
+
+
+
+Profile likelihood for all parameters
+
+```{r}
+
+library(ggplot2)
+library(patchwork)
+
+parameter_names <- c("alpha", "beta0", "beta1", "beta2")
+parameter_ranges <- list(
+  seq(0.1, 2, length.out = 40),                                   # alpha > 0
+  seq(estimate[2] - 1, estimate[2] + 1, length.out = 40),          # beta0
+  seq(estimate[3] - 0.05, estimate[3] + 0.05, length.out = 40),    # beta1
+  seq(estimate[4] - 0.5, estimate[4] + 0.5, length.out = 40)       # beta2
+)
+
+# Updated Profile likelihood function 
+profile_likelihood <- function(param_index, fit, loglik_fn, param_range, data) {
+  results <- numeric(length(param_range))
+
+  for (i in seq_along(param_range)) {
+    fixed_val <- param_range[i]
+    par_fixed <- fit$par
+    par_fixed[param_index] <- fixed_val
+
+    fn_optim <- function(par_free) {
+      full_par <- par_fixed
+      full_par[-param_index] <- par_free
+      val <- tryCatch({
+        loglik_fn(full_par, data$survtime, data$cens, data$age, data$sex)
+      }, error = function(e) return(1e10))
+      if (!is.finite(val)) val <- 1e10
+      return(val)
+    }
+
+    results[i] <- optim(par = fit$par[-param_index], fn = fn_optim, method = "BFGS")$value
+  }
+
+  return(data.frame(ParameterValue = param_range, LogLik = -results))  # flip
+}
+
+# Generating plots
+plot_list <- list()
+for (i in 1:4) {
+  prof_data <- profile_likelihood(i, final_fit, loglikelihood_A, parameter_ranges[[i]], data)
+
+  plot_list[[i]] <- ggplot(prof_data, aes(x = ParameterValue, y = LogLik)) +
+    geom_line(color = "blue") +
+    labs(
+      title = paste("Profile Log-Likelihood for", parameter_names[i]),
+      x = parameter_names[i],
+      y = "Log Likelihood"
+    ) +
+    theme_minimal()
+}
+
+#  2x2 grid
+
+((plot_list[[1]] | plot_list[[2]]) /
+ (plot_list[[3]] | plot_list[[4]])) 
+
+
+
+
+
+
+
+
+
+
+```
+
+These plots illustrate how changing one parameter at a time (while holding the others constant at their MLE) affects the model's log-likelihood. Each curve's peak represents the parameter's Maximum Likelihood Estimate (MLE).
+
+Interpretation of each plot:
+Top left: $\alpha$ (Weibull shape parameter)
+Around $\alpha$ = 1, the log-likelihood peaks.
+shows that the Weibull distribution is near an exponential, because exponential is Weibull when $\alpha$ = 1.
+The parameter is well-estimated and identified due to the strong curvature.
+
+Top right: $\beta_0$ (intercept)
+Peak log-likelihood occurs at around $\beta_0$ = –1.8.
+Due to this plot having a smooth concave shape, we know this is a stable estimate.
+This is log-hazard when covariates are 0.
+$\beta_0$ sets the baseline hazard.
+
+Bottom left: $\beta_1$ (age effect)
+Peaks around $\beta_1$ = 0.
+Age has little to no impact on survival time, as seen by the flatness and symmetry around 0.
+Not statistically significant as seen by 0 being included in the confidence interval.
+
+Bottom right: $\beta_2$ (sex effect)
+Stability is demonstrated by the smooth and concave log-likelihood curve.
+Peaks around $\beta_2$ = -0.15 to -0.1 , indicating that this is where the maximum likelihood estimate(MLE), is located.
+The curve's shape:
+Near the peak, it is relatively flat, indicating that it is not very sensitive to changes in $\beta_2$ around its MLE.
+Sex is not statistically significant in determining survival time, as this flatness suggests that $\beta_2$ is not very influential. 
+
+
+### Packages used for question 1:
+
+### Packages Used
+
+- **ggplot2**: for data visualization and plotting [@ggplot2]
+- **patchwork**: for combining plots and adding inline notes [@patchwork]
+- **dplyr**: for data manipulation and summary statistics [@dplyr]
+- **tinytex**: for LaTeX document compilation in R Markdown [@tinytex]
+
+### References
+
+### References
+
+```{r, results='asis', echo=FALSE}
+knitr::write_bib(c(c("ggplot2", "patchwork", "dplyr", "tinytex"), "base"), "packages.bib")
+```

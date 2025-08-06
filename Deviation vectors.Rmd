@@ -1,0 +1,113 @@
+---
+title: "Deviation vectors"
+output: pdf_document
+author: "Troy Bisnath"
+date: "2025-02-20"
+---
+
+```{r}
+# Question 3
+
+# Load necessary libraries
+library(ggplot2)
+
+# Load the dataset
+df <- read.csv("~/Downloads/CA1.csv")
+
+# Filter data for period 1
+df_period1 <- subset(df, TimePeriod == 1)[, -ncol(df)]  # Remove TimePeriod column
+
+# Sample mean vector
+mean_vector <- colMeans(df_period1)
+
+# Deviation vectors
+deviation_vectors <- sweep(df_period1, 2, mean_vector)
+
+# Extract deviation vectors for X1 and X3
+X1_dev <- as.numeric(deviation_vectors[1, ])
+X3_dev <- as.numeric(deviation_vectors[3, ])
+
+# Angle using dot product
+dot_product <- sum(X1_dev * X3_dev)
+norm_X1 <- sqrt(sum(X1_dev^2))
+norm_X3 <- sqrt(sum(X3_dev^2))
+angle_radians <- acos(dot_product / (norm_X1 * norm_X3))
+angle_degrees <- angle_radians * (180 / pi)
+
+# Print angle
+print(paste("Angle between deviation vectors X1 and X3:", round(angle_degrees, 2), "degrees"))
+
+# Compute covariance and correlation
+cov_matrix <- cov(df_period1)
+cov_X1_X3 <- cov_matrix[1, 3]  # Covariance between X1 and X3
+cor_X1_X3 <- cov_X1_X3 / (sqrt(cov_matrix[1, 1]) * sqrt(cov_matrix[3, 3]))  # Correlation
+
+# Print covariance and correlation
+print(paste("Covariance between X1 and X3:", round(cov_X1_X3, 3)))
+print(paste("Correlation between X1 and X3:", round(cor_X1_X3, 3)))
+
+# Select only the first two observations for plotting
+df_subset <- as.data.frame(deviation_vectors[1:2, ])
+
+# Prepare data for ggplot
+plot_data <- data.frame(
+  X = rep(0, 2),
+  Y = rep(0, 2),
+  Xend = df_subset[, 1],  # MaxBreadth
+  Yend = df_subset[, 2],  # BasHeight
+  Label = paste0("X", 1:2)
+)
+
+# Plot deviation vectors using ggplot2
+ggplot(plot_data, aes(x = X, y = Y, xend = Xend, yend = Yend, color = Label)) +
+  geom_segment(arrow = arrow(length = unit(0.2, "inches")), size = 1) +
+  geom_text(aes(x = Xend, y = Yend, label = Label), vjust = -0.5, hjust = -0.5) +
+  labs(title = "Deviation Vectors for Period 1 (First Two Observations)",
+       x = colnames(df_period1)[1], y = colnames(df_period1)[2]) +
+  theme_minimal()
+
+
+```
+
+
+```{r}
+
+# Question 4
+library(ggplot2)
+library(tinytex)
+library(tidyverse)
+library(knitr)
+library(tidyr)
+library(dplyr)
+
+df <- read.csv("~/Downloads/CA1.csv")
+
+# Y = 3X4 - X1
+
+df$Y <- 3 * df$NasHeight - df$MaxBreadth
+
+# Sample means for each period
+
+s_mean <- aggregate(Y ~ TimePeriod, data = df, FUN = mean)
+print(s_mean)
+
+# Covariance Matrix
+
+Y_values <- split(3 * data$NasHeight - data$MaxBreadth, data$TimePeriod)
+
+
+# Placing all Yi values into a matrix
+Y_matrix <- do.call(cbind, Y_values)
+
+# Compute covariance matrix
+covariance_Y <- cov(Y_matrix, use = "complete.obs")
+row_column_names <- c("Y1", "Y2", "Y3", "Y4", "Y5")
+
+# Assign names to the covariance matrix
+colnames(covariance_Y) <- row_column_names
+rownames(covariance_Y) <- row_column_names
+
+knitr::kable(covariance_Y, digits = 2, col.names = row_column_names)
+
+```
+

@@ -1,0 +1,313 @@
+---
+title: "Likelihood, uniform distribution on sphere, and d-spheres"
+output: pdf_document
+date: "2025-07-18"
+---
+
+```{r}
+# Likelihood:
+x <- c(3.91, 4.85, 2.28, 4.06, 3.70, 4.04, 5.46, 3.53, 2.28, 1.96, 2.53, 3.88, 2.22, 3.47, 4.82, 2.46, 2.99, 2.54, 0.52, 2.50)
+log_like <- function(theta){
+  sum(log(1-cos(x-theta)))
+}
+
+#between pi and -pi
+theta_range <- seq(-pi,pi,length.out=500)
+
+# computing log likelihood for each theta
+
+overall_log <- sapply(theta_range,log_like)
+
+plot(theta_range, overall_log, type = "l", xlab= expression(theta), ylab = "Log_Likelihood")
+
+
+
+
+```
+
+
+```{r}
+x <- c(3.91, 4.85, 2.28, 4.06, 3.70, 4.04, 5.46, 3.53, 2.28, 1.96, 2.53, 3.88, 2.22, 3.47, 4.82, 2.46, 2.99, 2.54, 0.52, 2.50)
+loglik <- function(theta){
+  sum(log(1-cos(x-theta)))
+}
+
+theta_range <- seq(-pi,pi, length.out=500)
+
+loglikevalues <- sapply(theta_range, loglik)
+
+plot(theta_range, loglikevalues, type="l", xlab = expression(theta), ylab = "log likelihood")
+
+
+
+
+```
+
+
+
+```{r}
+# plotting likelihood function
+
+x <- c(3.91, 4.85, 2.28, 4.06, 3.70, 4.04, 5.46, 3.53, 2.28, 1.96, 2.53, 3.88, 2.22, 3.47, 4.82, 2.46, 2.99, 2.54, 0.52, 2.50)
+
+likelihood <- function(theta){
+  prod(1-cos(x-theta))
+}
+
+theta_range
+
+likevals <- sapply(theta_range, likelihood)
+
+plot(theta_range,likevals, type = "l")
+
+
+
+
+
+
+```
+
+
+
+
+```{r}
+# another example similar to log likelihood
+# poisson
+# generate 10 random poisson with lambda = 45
+X <- rpois(10,lambda = 45)
+loglike <- function(lambda){
+  sum(log(lambda^X*exp(-lambda)))
+}
+
+theta_grid <- seq(0,1,length.out=100)
+
+logvals <- sapply(theta_grid,loglike)
+
+plot(theta_grid,logvals, type = "l")
+
+
+
+
+
+```
+
+
+```{r}
+# Mixture distribution
+set.seed(123)  # for reproducibility
+
+# Parameters
+N <- 5000
+theta <- 0.75
+
+# Allocate storage
+x <- numeric(N)
+
+# Simulate
+for (i in 1:N) {
+  u <- runif(1)
+  if (u <= theta) {
+    x[i] <- rnorm(1, mean = 0, sd = 1)
+  } else {
+    x[i] <- rnorm(1, mean = 3, sd = 1)
+  }
+}
+
+# Histogram
+hist(x, breaks = 50, freq = FALSE, col = "lightgray",
+     main = "Mixture Distribution Histogram with True Density",
+     xlab = "x", border = "white")
+
+# Superimpose true mixture density
+xgrid <- seq(min(x) - 1, max(x) + 1, length.out = 500)
+f1 <- dnorm(xgrid, mean = 0, sd = 1)
+f2 <- dnorm(xgrid, mean = 3, sd = 1)
+mixture_density <- theta * f1 + (1 - theta) * f2
+
+lines(xgrid, mixture_density, col = "blue", lwd = 2)
+
+
+```
+
+
+
+```{r}
+set.seed(123)
+N <- 5000
+theta<-0.75
+
+x <- numeric(N)
+
+for(i in 1:N){
+  u <- runif(1) 
+    if(u<=theta){
+      x[i]<-rnorm(1,0,1)
+    } else {
+      x[i] <- rnorm(1,3,1)
+    }
+}
+
+hist(x,breaks=50, freq=FALSE)
+
+xgrid <- seq(min(x)-1, max(x)+1, length.out=500)
+f1 <- dnorm(xgrid,0,1)
+f2 <- dnorm(xgrid,3,1)
+mixture_density <- theta*f1 + (1-theta)*f2
+lines(xgrid,mixture_density,col="red")
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+```{r}
+# question 3
+# uniform distribution on sphere
+# d =2 
+# U = X/||X||
+#(X1,X2) ~ N(0,1)
+# generate n points unifromly on d sphere
+
+uniform_sphere <- function(n,d){
+  X <- matrix(rnorm(n*d), nrow = n,ncol = d)
+  norms <- sqrt(rowSums(X^2))
+  U <- X/norms
+  return(U)
+}
+
+set.seed(123)
+point <- uniform_sphere(200,2)
+
+plot(point)
+
+
+
+
+
+
+
+```
+
+
+
+```{r}
+# generate n points on d sphere
+set.seed(123)
+unif_sphere <- function(n,d){
+  X <- matrix(rnorm(n*d),nrow=n,ncol=d)
+  norms <- sqrt(rowSums(X^2))
+  U <- X/norms
+  return(U)
+}
+
+pointz <- unif_sphere(200,2)
+
+plot(pointz)
+
+
+
+
+
+
+
+
+
+```
+
+
+
+```{r}
+# simulate from linear model
+
+set.seed(123)
+n <- 200
+sigma <- sqrt(0.5)
+x <- runif(n,-1,1)
+e <- rnorm(n,0,sigma)
+
+y <- 2 - 3*x + e
+X <- cbind(1,x)
+beta_hat <- solve(t(X)%*%X)%*%t(X)%*%y
+
+#y = XB
+yhat <- X%*%beta_hat
+residual <- y - yhat
+sigma_hat <- sum(residual^2)/(n-2)
+var_hat <- sigma_hat*(solve(t(X)%*%X))
+se_hat <- sqrt(diag(var_hat))
+
+plot(x,y)
+
+
+
+
+
+
+
+
+```
+
+
+
+
+```{r}
+set.seed(123)
+n <- 200
+sigma <- sqrt(0.5)
+x <- runif(n,-1,1)
+e <- rnorm(n,0,sigma)
+
+y <- 2- 3*x + e
+
+X <- cbind(1,x)
+beta <- solve(t(X)%*%X)%*%t(X)%*%y
+
+yhat <- X%*%beta
+residuals <- y - yhat
+sigma <- sum(residuals^2)/(n-2)
+var <- sigma*solve(t(X)%*%X)
+se <- sqrt(diag(var))
+
+plot(x,y)
+
+
+
+
+
+
+
+
+```
+
+
+
+```{r}
+n <- 200
+sigma <- sqrt(1.5)
+j <- 50
+t <- 1:n
+e <- rnorm(n,0,sigma)
+
+y <- 10 - 2*cos((2*pi*t)/j) + 3*sin((2*pi*t)/j) + 0.05*t + e
+
+beta_h <- solve(t)
+
+
+
+
+
+
+
+
+```

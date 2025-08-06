@@ -1,0 +1,841 @@
+---
+title: "Analytics Assignment 1"
+author: "Thashin Pillay and Troy Bisnath"
+output:
+  pdf_document:
+    latex_engine: xelatex
+date: "2025-03-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, 
+  warning = FALSE, 
+  message = FALSE, 
+  fig.width = 4, 
+  fig.height = 3, 
+  out.width = "50%",
+  dpi = 300,
+  fig.align = "center"
+)
+
+# Question 1a
+
+set.seed(123)
+
+# Load necessary libraries
+library(ggplot2)
+library(rpart.plot)
+library(caret)
+library(glmnet)
+library(class)
+library(rpart)
+library(randomForest)
+library(xgboost)
+library(dplyr)
+library(splines)
+library(pROC)
+library(reshape2)
+library(ranger)
+library(tinytex)
+tinytex::tlmgr_update()
+
+```
+
+# [***Question 1***]{.underline}
+
+### [***Part A***]{.underline}
+
+Note: All categorical type variables were converted to factors to be used in various models. Revenue as the target variable was also considered under this but as a binary numeric variable for certain mdoels that require it such as those using glmnet.
+
+[Linear Logistic Regression with elastic-net]{.underline}
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+train <- read.csv("~/Downloads/online_shopping_train.csv")
+valid <- read.csv("~/Downloads/online_shopping_valid.csv")
+test <- read.csv("~/Downloads/online_shopping_testing.csv")
+
+
+# Convert categorical variables to factors
+train$Month <- as.factor(train$Month)
+train$VisitorType <- as.factor(train$VisitorType)
+train$Weekend <- as.factor(train$Weekend)
+train$OperatingSystems <- as.factor(train$OperatingSystems)
+train$Browser <- as.factor(train$Browser)
+train$Revenue <- as.factor(train$Revenue)
+
+# 10-fold cross-validation setup
+train_control <- trainControl(method="cv", number=10)
+
+# 1. Logistic Regression (Linear) with Elastic-Net Regularization 
+
+# Set up model matrix
+x <- model.matrix(Revenue ~ ., train)[,-1]  # Converting categorical to dummies
+y <- as.numeric(train$Revenue) - 1  # Converting to binary
+
+cross_validation_glm <- cv.glmnet(x, y, alpha=0.5, family="binomial", nfolds=10)
+best_lambda <- cross_validation_glm$lambda.min
+glm_model <- glmnet(x, y, alpha=0.5, lambda=best_lambda, family="binomial")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+plot(cross_validation_glm)
+title("Elastic Net Logistic Regression\nCross-Validation Plot", line = 2.5, cex.main = 0.5, cex.lab = 0.5)
+
+
+```
+
+Logistic Linear Model: The Logistic Linear model applies a standard logistic regression using the original predictors. It assumes a linear relationship between the predictors and the log odds of the outcome. Elastic-net regularisation was applied with alpha = 0.5, which balances between lasso and ridge penalties. Lambda was chosen through cross-validation with 10 folds, with the optimal lambda minimising the binomial deviance as shown through the cross validation curve with different log(lamda) values. The model yields an ROC AUC of 0.906, suggesting good discrimination ability which is to be discussed later.
+
+[Non-Linear Logistic Regression with elastic-net]{.underline}
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# 2. Logistic regression (Non Linear)
+
+
+# Prepare the data with polynomial terms
+# ------------------------------
+# Convert categorical variables to factors 
+categorical_vars <- c("Month", "OperatingSystems", "Browser", "VisitorType", "Weekend", "Revenue")
+
+train[categorical_vars] <- lapply(train[categorical_vars], factor)
+valid[categorical_vars] <- lapply(valid[categorical_vars], factor)
+
+# Adding BounceRates polynomial term to your existing non-linear model
+train_poly <- train |>
+  mutate(
+    ProductRelated2 = ProductRelated^2,
+    ProductRelated3 = ProductRelated^3,
+    PageValues2 = PageValues^2,
+    PageValues3 = PageValues^3,
+    ExitRates2 = ExitRates^2,
+    BounceRates2 = BounceRates^2  # <- NEW quadratic term
+  )
+
+valid_poly <- valid |>
+  mutate(
+    ProductRelated2 = ProductRelated^2,
+    ProductRelated3 = ProductRelated^3,
+    PageValues2 = PageValues^2,
+    PageValues3 = PageValues^3,
+    ExitRates2 = ExitRates^2,
+    BounceRates2 = BounceRates^2  # <- NEW quadratic term
+  )
+
+# Create model matrices (with new polynomial term)
+x_train_poly <- model.matrix(Revenue ~ ., data = train_poly)[, -1]
+x_valid_poly <- model.matrix(Revenue ~ ., data = valid_poly)[, -1]
+
+# Create numeric response variable for glmnet modeling
+y_train_poly <- as.numeric(as.character(train_poly$Revenue))
+y_valid_poly <- as.numeric(as.character(valid_poly$Revenue))
+
+# ------------------------------
+# Fit Elastic Net with Polynomial Features
+# ------------------------------
+set.seed(123)
+cv_glmnet_poly <- cv.glmnet(
+  x_train_poly,
+  y_train_poly,
+  family = "binomial",
+  alpha = 0.5,
+  nfolds = 10
+)
+
+
+
+# Fit final polynomial model with best lambda
+final_glmnet_poly <- glmnet(
+  x_train_poly,
+  y_train_poly,
+  family = "binomial",
+  alpha = 0.5,
+  lambda = cv_glmnet_poly$lambda.min
+)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+plot(cv_glmnet_poly)
+title("Elastic Net Logistic Regression with Polynomial Features\nCross-Validation Plot", line = 2.5, cex.main = 0.5, cex.lab = 0.5)
+
+
+```
+
+Logistic Nonlinear Model: The Logistic Nonlinear model extends the linear logistic regression by including polynomial terms to capture nonlinear effects. The variables that were made to polynomial were ProductRelated and PageValues to degree 3, while, ExitRates and BounceRates were to degree 2. Regularisation was applied with elastic-net (alpha = 0.5), and lambda was selected via cross-validation with 10 folds as specifiedand explained with linear regression. This can be seen from the cross validation curve of values of log(lambda) The model achieves an ROC AUC of 0.914, showing an improvement over the linear model due to its ability to model complex relationships which will be discussed later
+
+[K-Nearest Neighbours Method]{.underline}
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# 3. K-Nearest Neighbors
+
+ctrl <- trainControl(method = 'repeatedcv', number = 10, repeats = 10)
+
+knn_fit <- train(Revenue ~ Administrative + ProductRelated + BounceRates + ExitRates + PageValues + SpecialDay,
+                   data = train, 
+                   method = "knn", 
+                   preProcess = c("center", "scale"),  # important step
+                   tuneGrid = expand.grid(k = seq(3, 25, by = 2)), 
+                   trControl = ctrl)
+
+# View best k
+optimal_k <- knn_fit$bestTune$k
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+print(paste("Optimal K:", optimal_k))
+# View results
+print(knn_fit)
+
+ggplot(knn_fit) + 
+  ggtitle("KNN Tuning Plot\nCross-Validation ROC AUC vs k") + 
+  theme(
+    plot.title = element_text(size = 5),  # smaller title
+    axis.title = element_text(size = 7),  
+    axis.text = element_text(size = 6)    
+  )
+
+
+
+```
+
+K-Nearest Neighbors (KNN): KNN is a non-parametric method that classifies based on the majority vote of the nearest neighbors. A range of k values was tested from 3 to 25, and the optimal k was selected as 15 using repeated cross-validation with 10 folds. This minimizes risk of over-fitting as well as under-fitting.This can be visualised through the cross validation plotting to maximise ROC AUC. This choice balances model complexity and generalization ability. The model achieved an ROC AUC of 0.881.
+
+[Classification Trees]{.underline}
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# 4. Classification Tree with Pruning 
+tree_model <- rpart(Revenue ~ ., data=train, method="class")
+optimal_cp <- tree_model$cptable[which.min(tree_model$cptable[,"xerror"]), "CP"]
+pruned_tree <- prune(tree_model, cp = optimal_cp)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+print(paste("Best CP:" , round(optimal_cp,3)))
+
+rpart.plot(tree_model,
+           type = 2,
+           extra = 104,
+           fallen.leaves = TRUE,
+           box.palette = "RdYlGn",
+           shadow.col = "gray",
+           main = "Unpruned Classification Tree")
+
+rpart.plot(pruned_tree,
+           type = 2,
+           extra = 104,
+           fallen.leaves = TRUE,
+           box.palette = "RdYlGn",
+           shadow.col = "gray",
+           main = "Pruned Classification Tree")
+
+```
+
+Classification Tree: A classification tree was grown using recursive binary splitting. An unpruned tree was initially created, which showed overfitting tendencies. Pruning was then applied, guided by the complexity parameter (cp) that was optimised using cross-validation with 10 folds. This was found to be estimated at 0.012. The pruned tree shows simpler decision rules and better generalisation. Key features in splits include PageValues, BounceRates, and Month.
+
+[Random Forest]{.underline}
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# 5. Random Forest
+
+categorical_vars <- c("Month", "OperatingSystems", "Browser", "VisitorType", "Weekend", "Revenue")
+
+train[categorical_vars] <- lapply(train[categorical_vars], factor)
+valid[categorical_vars] <- lapply(valid[categorical_vars], factor)
+
+# Convert Revenue for caret's twoClassSummary (Yes/No for positive class)
+train$Revenue_Factor <- factor(ifelse(train$Revenue == 1, "Yes", "No"), levels = c("No", "Yes"))
+valid$Revenue_Factor <- factor(ifelse(valid$Revenue == 1, "Yes", "No"), levels = c("No", "Yes"))
+
+# ------------------------------
+# Set trainControl & grid
+# ------------------------------
+# Exclude Revenue and Revenue_Factor from predictors
+x_train <- train[, !(names(train) %in% c("Revenue", "Revenue_Factor"))]
+
+# Create target factor variable (Yes/No)
+y_train <- train$Revenue_Factor
+
+
+
+# Train control setup for cross-validation
+ctrl_rf <- trainControl(
+  method = "cv",              
+  number = 10,                
+  classProbs = TRUE,          
+  summaryFunction = twoClassSummary, 
+  savePredictions = "final"   
+)
+
+num_predictors <- ncol(train) - 1  # Minus target variable
+
+grid_rf <- expand.grid(
+  mtry = c(2, 4, 6, 8, 10),
+  splitrule = "gini",  # Classification split rule
+  min.node.size = 1     # Small nodes to grow big trees
+)
+
+# ------------------------------
+# Train Random Forest with ranger
+# ------------------------------
+set.seed(123)
+# Train random forest with ranger (x/y interface)
+rf_model <- train(
+  x = x_train,
+  y = y_train,
+  method = "ranger",
+  trControl = ctrl_rf,
+  tuneGrid = grid_rf,
+  metric = "ROC",
+  importance = "impurity"
+)
+
+
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(rf_model) + 
+  ggtitle("Random Forest Tuning Plot\nROC AUC vs mtry") + 
+  theme(
+    plot.title = element_text(size = 5),  # smaller title
+    axis.title = element_text(size = 7),  
+    axis.text = element_text(size = 6)    
+  )
+
+
+```
+
+Random Forest: Random Forest is an ensemble of decision trees, reducing variance through averaging. OOB (Out-of-bag) error estimation was used to evaluate model performance, as recommended for Random Forests instead of cross validation The mtry parameter was tuned and set to 6, balancing prediction accuracy and computational efficiency. This can be visualised from the ROC AUC curve to our mtry. The model achieved an ROC AUC of 0.926.
+
+[XGBoost]{.underline}
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+# ------------------------------
+# Train XGBoost
+# ------------------------------
+
+# Load libraries
+library(xgboost)
+library(caret)
+library(pROC)
+library(dplyr)
+
+#reload all data again
+train <- read.csv("~/Downloads/online_shopping_train.csv")
+valid <- read.csv("~/Downloads/online_shopping_valid.csv")
+test <- read.csv("~/Downloads/online_shopping_testing.csv")
+
+# Convert categorical variables to factors 
+categorical_vars <- c("Month", "OperatingSystems", "Browser", "VisitorType", "Weekend", "Revenue")
+
+
+train[categorical_vars] <- lapply(train[categorical_vars], factor)
+valid[categorical_vars] <- lapply(valid[categorical_vars], factor)
+
+
+# Check for missing values
+train <- na.omit(train)
+
+xgb_model <- readRDS("xgb_model.rds")
+"Hyperparameter Tuning - XGBoost (ROC)"
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# Plot performance vs hyperparameters
+
+plot(xgb_model, main = "Hyperparameter Tuning - XGBoost (ROC)")
+
+
+```
+
+XGBoost: XGBoost applies gradient boosting to optimise model performance. Hyperparameters were tuned across a grid of values, focusing on nrounds (iterations), eta (learning rate), max_depth, gamma, and min_child_weight. A relatively smaller nrounds was chosen as the data we are working with is not extremely extensive. The learning rate was chosen to be relatievly small as well as we are focusing on a slow-leaning model. The model achieved an ROC AUC of 0.936, demonstrating strong predictive power.
+
+### [***Part B***]{.underline}
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Question 1b
+set.seed(123)
+# Validation data
+valid <- read.csv("~/Downloads/online_shopping_valid.csv")
+# Ensuring that factor conversion is consistent with training set
+valid$Month <- as.factor(valid$Month)
+valid$VisitorType <- as.factor(valid$VisitorType)
+valid$Weekend <- as.factor(valid$Weekend)
+valid$OperatingSystems <- as.factor(valid$OperatingSystems)
+valid$Browser <- as.factor(valid$Browser)
+valid$Revenue <- factor(valid$Revenue, levels = c("0", "1"))
+
+
+
+# 1. Logistic Regression (Linear) with Elastic-Net Regularization prediction
+
+x_valid <- model.matrix(Revenue ~ ., valid)[,-1]
+logreg_probabilities <- predict(glm_model, newx = x_valid, type = "response")
+logreg_predictions <- ifelse(logreg_probabilities > 0.5, 1, 0)
+
+# 2. Logistic regression (Non Linear)
+
+x_valid_polynomial <- model.matrix(Revenue ~ ., data = valid_poly)[, -1]
+
+logreg_poly_probabilities <- predict(final_glmnet_poly, newx = 
+                                       x_valid_polynomial, type = "response")
+logreg_poly_predictions <- ifelse(logreg_poly_probabilities > 0.5, 1, 0)
+
+
+# 3. KNN prediction
+knn_probabilities <- predict(knn_fit, newdata = valid, type = "prob")[,2]
+knn_predictions <- ifelse(knn_probabilities > 0.5, 1, 0)
+
+# 4. Classification Tree with Pruning prediction
+tree_probabilities <- predict(pruned_tree, newdata = valid, type = "prob")[,2]
+tree_predictions <- ifelse(tree_probabilities > 0.5, 1, 0)
+
+
+# 5. Random Forest prediction
+rf_probabilities <- predict(rf_model, newdata = valid, type = "prob")[, "Yes"]
+rf_predictions <- ifelse(rf_probabilities > 0.5, 1, 0)
+
+# 6. XGBoost prediction
+xgb_probabilities <- predict(xgb_model, newdata = valid, type = "prob")[,2]
+xgb_predictions <- ifelse(xgb_probabilities > 0.5, 1, 0)
+
+library(caret)
+library(pROC)
+
+compute_metrics <- function(pred_class, pred_prob, actual) {
+  # Ensuring that prediction probabilities are numeric vectors
+  pred_prob <- as.numeric(pred_prob)
+  
+  # Confusion matrix for metrics: treating '1' as the positive class
+cm <- confusionMatrix(
+  factor(pred_class, levels = c(0,1)), 
+  factor(actual, levels = c(0,1)), 
+  positive = "1"
+)
+
+  
+  # ROC AUC calculation with numeric vector input
+  roc_auc <- roc(actual, pred_prob, quiet = TRUE)$auc
+  
+  # Collecting metrics
+  metrics <- data.frame(
+    Accuracy = cm$overall["Accuracy"],
+    F1 = cm$byClass["F1"],
+    Precision = cm$byClass["Precision"],
+    Recall = cm$byClass["Recall"],
+    Specificity = cm$byClass["Specificity"],
+    ROC_AUC = roc_auc
+  )
+  return(metrics)
+}
+
+
+# Metrics for each model
+logreg_metrics <- compute_metrics(logreg_predictions, logreg_probabilities, valid$Revenue)
+logreg_poly_metrics <- compute_metrics(logreg_poly_predictions, logreg_poly_probabilities, valid$Revenue)
+knn_metrics <- compute_metrics(knn_predictions, knn_probabilities, valid$Revenue)
+tree_metrics <- compute_metrics(tree_predictions, tree_probabilities, valid$Revenue)
+rf_metrics <- compute_metrics(rf_predictions, rf_probabilities, valid$Revenue)
+xgb_metrics <- compute_metrics(xgb_predictions, xgb_probabilities, valid$Revenue)
+# Combining results into one table with row names
+results <- rbind(
+  logreg_metrics,
+  logreg_poly_metrics,
+  knn_metrics,
+  tree_metrics,
+  rf_metrics,
+  xgb_metrics
+)
+
+# Set rownames after binding
+rownames(results) <- c(
+  "Logistic_Linear",
+  "Logistic_Nonlinear",
+  "KNN",
+  "Classification_Tree",
+  "Random_Forest",
+  "XGboost model"
+)
+
+print(results)
+results_table <- results
+results_table$model <- rownames(results_table)
+
+results_melt <- melt(results_table, id.vars = "model")
+
+ggplot(results_melt, aes(x = model, y = value, fill = variable)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Model Performance Comparison on the Validation Set", y = "Metric Value", x = "Model") +
+  theme(plot.title = element_text(size = 6, face = "bold"),  # Title font size
+    axis.title.x = element_text(size = 8),               # X-axis title font size
+    axis.title.y = element_text(size = 8),               # Y-axis title font size
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 7),  # X-axis tick labels
+    axis.text.y = element_text(size = 7),               # Y-axis tick labels
+    legend.title = element_text(size = 6),              # Legend title font
+    legend.text = element_text(size = 6)  )              # Legend text font
+
+# Logistic Regression (Linear)
+roc_logreg <- roc(response = valid$Revenue, predictor = logreg_probabilities, levels = c("0", "1"))
+# Logistic Regression (Non-Linear)
+roc_logreg_poly <- roc(response = valid$Revenue, predictor = logreg_poly_probabilities, levels = c("0", "1"))
+# KNN
+roc_knn <- roc(response = valid$Revenue, predictor = knn_probabilities, levels = c("0", "1"))
+# Classification Tree
+roc_tree <- roc(response = valid$Revenue, predictor = tree_probabilities, levels = c("0", "1"))
+# Random Forest
+roc_rf <- roc(response = valid$Revenue, predictor = rf_probabilities, levels = c("0", "1"))
+# XGBoost
+roc_xgb <- roc(response = valid$Revenue, predictor = xgb_probabilities, levels = c("0", "1"))
+
+
+# Combined ROC Curve Plot
+plot(roc_logreg, col = "blue", main = "ROC Curves - All Models", lwd = 2, cex.main = 0.7)
+plot(roc_logreg_poly, col = "red", add = TRUE, lwd = 2)
+plot(roc_knn, col = "green", add = TRUE, lwd = 2)
+plot(roc_tree, col = "purple", add = TRUE, lwd = 2)
+plot(roc_rf, col = "orange", add = TRUE, lwd = 2)
+plot(roc_xgb, col = "darkred", add = TRUE, lwd = 2)
+
+legend("bottomright",
+       legend = c("Logistic Linear", "Logistic Non-Linear", "KNN", "Classification Tree", "Random Forest", "XGBoost"),
+       col = c("blue", "red", "green", "purple", "orange", "darkred"),
+       lwd = 1.5, cex = 0.4)
+
+
+
+```
+
+Random Forest had overall the second best performance, with an accuracy (0.9040), a high F1 score (0.6595), and high ROC AUC (0.9260). It also maintained high specificity (0.9597) along with balanced recall (0.6), demonstrating its ability to accurately identify positive cases while minimising false positives.
+
+The XGBoost model performed similarly to Random Forest with the best performace, with an F1 score of 0.6619 and an accuracy of 0.9055. Its ROC AUC (0.9361) was slightly higher than Random Forest, demonstrating superior discriminative capability. This shows that boosting accurately captured the complex nonlinear patterns.
+
+The classification tree performed remarkably well with regard to recall (0.6774) and F1 score (0.6763), which was most likely because of its simplicity and tendency to over-predict positives. However, its ROC AUC (0.8664) was lower than ensemble models, emphasizing the trade-off between interpretability and predictive accuracy.
+
+Logistic regression using nonlinear features outperformed linear regression, with higher recall (0.5194) and F1 (0.6098). This improvement demonstrates that non-linearities in data are essential and can be captured using polynomial transformation.
+
+K-Nearest Neighbours (KNN) performed moderately well, with accuracy of 0.8840 and F1 of 0.5842, a bit lower than ensemble models. It had a balanced recall (0.5258) but poorer precision (0.6573), implying more false positives.
+
+The linear logistic regression model scored well in terms of specificity (0.9751) and precision (0.7455), but had the lowest recall (0.3967), which indicates that it has a tendency to fail to identify positive cases, resulting in the lowest F1 score (0.5178) of any model.
+
+The ensemble models, Random Forest and XGBoost, outperformed every other method on the majority of metrics. XGboost was chosen as the final model due to its exceptional mix of precision, recall, and overall predictive performance. The visualisation supports this consistency, as ensemble models outperform in all major metrics, making them the most trustworthy for final implementation.
+
+# [***Question 2***]{.underline}
+
+Part A
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Coefficient extraction from Q1 linear model
+coef(glm_model, s = "lambda.min")
+
+```
+
+Elastic-net regularisation (α = 0.5) was used to train the linear logistic regression model, balancing L1 and L2 penalties to prevent overfitting and allow variable selection. When all other variables are held constant, the resulting model coefficients can be understood as the log-odds effect of each predictor on the probability of a transaction outcome (Revenue = 1).
+
+Interpretations of key coefficients: The probability of a transaction increases dramatically as the average number of pages viewed increases, according to the high positive coefficient of PageValues.
+
+Higher bounce rates—users exiting after viewing a single page—are linked to a reduced probability of conversion, as indicated by the negative coefficient of bounce rates.
+
+ProductRelated showed a positive coefficient, indicating that the odds of making a purchase is increased when more people view ProductRelated pages Seasonal influence where users are more likely to complete purchases were shown in the positive coefficients for some months (like December).
+
+Additionally, there was a low positive coefficient for the Weekend factor, suggesting that there were somewhat more transactions on weekends.
+
+The signs and values of these coefficients generally follow logical business justification: higher page values, lower bounce rates, and greater product engagement all raise the likelihood of a transaction taking place.
+
+### [***Part B***]{.underline}
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+rpart.plot(pruned_tree,
+           type = 2,
+           extra = 104,
+           fallen.leaves = TRUE,
+           box.palette = "RdYlGn",
+           shadow.col = "gray",
+           main = "Pruned Classification Tree")
+
+
+```
+
+Root node: \< 0.94 PageValues If yes, a large percentage of samples (79%), with low Gini impurity, and class 0 (no conversion) are the majority of outcomes.\
+For edge cases, it further divides between conditions based on month, product-related duration, and administrative duration. If not, it takes you to the right side of the tree, where features related to the product, page values, and bounce rate are taken into consideration.
+
+Low PageValues on the left: Month check: There is a small likelihood of conversion if it falls within the months of August, December, July, June, May, October, or September (still leaning towards class 0).
+
+If Administrative duration \>= 43, this indicates they spent time on admin pages (perhaps reviewing details), raising conversion probability (class 1), a high product-related duration (\>= 1079) indicates a slightly higher likelihood of class 1, but it still frequently reverts to class 0.
+
+(PageValues \>= 0.94) on the right: With high confidence (0.74 purity), class 1 (conversion) is the direct result if BounceRates \>= 0.000406. If bounce rates are lower: PageValues \< 17: Less than 38 product-related page views and lower page values (still above 0.94) tend to indicate class 0.
+
+Predictions are heavily pushed towards class 1 when there are numerous product-related counts (≥38) or extremely high page values (≥17), which indicate a user who is very engaged with products and likely to convert.
+
+### [***Part C***]{.underline}
+
+[Variable Importance plots]{.underline}
+
+```{r echo=FALSE, fig.height=10, fig.width=10, message=FALSE, warning=FALSE}
+# Random Forest importance from caret model (already done)
+rf_var_imp <- varImp(rf_model)
+plot(rf_var_imp, main = "Random Forest Variable Importance")
+
+# XGBoost importance from caret model (use this instead of xgb.importance)
+xgb_var_imp <- varImp(xgb_model)
+plot(xgb_var_imp, main = "XGBoost Variable Importance")
+
+
+```
+
+PageValues is the most influential feature in both the Random Forest and XGBoost models, with the highest importance score of 100. This highlights that users with higher page engagement are significantly more likely to complete a transaction.
+
+ExitRates, ProductRelated_Duration, and BounceRates are also consistently important. Higher ExitRates suggest users are leaving the site without purchasing, while longer time spent on product pages indicates stronger purchase intent. Higher BounceRates, reflecting users who leave quickly, are associated with a lower likelihood of conversion.
+
+Seasonal and behavioral features contribute as well, though to a lesser extent. MonthNov shows increased importance in XGBoost, likely capturing seasonal shopping behavior such as Black Friday sales. Returning visitors are also more likely to convert, as indicated by the VisitorTypeReturning_Visitor feature.
+
+While both models emphasize engagement metrics, XGBoost places more weight on temporal factors and captures complex interactions. Random Forest, by contrast, distributes importance more evenly across user engagement and behavior.
+
+In summary, both models confirm that high page engagement, product interaction, and seasonal factors are key drivers of purchase decisions. This insight can inform strategies to increase conversions by targeting engaged users, especially during peak shopping periods.
+
+[Partial Dependence Plots]{.underline}
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Load required libraries
+library(pdp)
+library(ggplot2)
+library(gridExtra)
+
+# ----------------------------
+# RANDOM FOREST PDPs (rf_model)
+# ----------------------------
+
+# PageValues PDP
+rf_pdp_pagevalues <- partial(rf_model, pred.var = "PageValues", plot = FALSE)
+rf_pdp_pagevalues_plot <- autoplot(rf_pdp_pagevalues, 
+                                   main = "RF - Partial Dependence: PageValues",
+                                   xlab = "PageValues",
+                                   ylab = "Predicted Probability") +
+      ggtitle("RF - Partial Dependence: PageValues") +
+  theme(
+    plot.title = element_text(size = 4.2),      # main title font size
+    axis.title = element_text(size = 7),      # axis label font size
+    axis.text = element_text(size = 6)      )  # axis tick font size
+# ExitRates PDP
+rf_pdp_exitrates <- partial(rf_model, pred.var = "ExitRates", plot = FALSE)
+rf_pdp_exitrates_plot <- autoplot(rf_pdp_exitrates, 
+                                  main = "RF - Partial Dependence: ExitRates",
+                                  xlab = "ExitRates",
+                                  ylab = "Predicted Probability") +
+      ggtitle("RF - Partial Dependence: ExitRates") +
+  theme(
+    plot.title = element_text(size = 4.2),      # main title font size
+    axis.title = element_text(size = 7),      # axis label font size
+    axis.text = element_text(size = 6)   )     # axis tick font size
+
+# BounceRates PDP
+rf_pdp_bouncerates <- partial(rf_model, pred.var = "BounceRates", plot = FALSE)
+rf_pdp_bouncerates_plot <- autoplot(rf_pdp_bouncerates, 
+                                    main = "RF - Partial Dependence: BounceRates",
+                                    xlab = "BounceRates",
+                                    ylab = "Predicted Probability") +
+    ggtitle("RF - Partial Dependence: BounceRates") +
+  theme(
+    plot.title = element_text(size = 4.2),      # main title font size
+    axis.title = element_text(size = 7),      # axis label font size
+    axis.text = element_text(size = 6)        # axis tick font size
+  )
+
+# Combine RF PDP plots in one grid
+grid.arrange(rf_pdp_pagevalues_plot, rf_pdp_exitrates_plot, rf_pdp_bouncerates_plot, ncol = 3)
+
+
+# ----------------------------
+# XGBOOST PDPs (xgb_model)
+# ----------------------------
+
+# PageValues PDP
+xgb_pdp_pagevalues <- partial(xgb_model, pred.var = "PageValues", plot = FALSE)
+xgb_pdp_pagevalues_plot <- autoplot(xgb_pdp_pagevalues, 
+                                    main = "XGB - Partial Dependence: PageValues",
+                                    xlab = "PageValues",
+                                    ylab = "Predicted Probability") + 
+  ggtitle("XGB - Partial Dependence: PageValues") +
+  theme(
+    plot.title = element_text(size = 3),      # main title font size
+    axis.title = element_text(size = 7),      # axis label font size
+    axis.text = element_text(size = 6)        # axis tick font size
+  )
+
+
+# ExitRates PDP
+xgb_pdp_exitrates <- partial(xgb_model, pred.var = "ExitRates", plot = FALSE)
+xgb_pdp_exitrates_plot <- autoplot(xgb_pdp_exitrates, 
+                                   main = "XGB - Partial Dependence: ExitRates",
+                                   xlab = "ExitRates",
+                                   ylab = "Predicted Probability") +   
+  ggtitle("XGB - Partial Dependence: ExitRates") +
+  theme(
+    plot.title = element_text(size = 3),      # main title font size
+    axis.title = element_text(size = 7),      # axis label font size
+    axis.text = element_text(size = 6)        # axis tick font size
+  )
+
+# BounceRates PDP
+xgb_pdp_bouncerates <- partial(xgb_model, pred.var = "BounceRates", plot = FALSE)
+xgb_pdp_bouncerates_plot <- autoplot(xgb_pdp_bouncerates, 
+                                     main = "XGB - Partial Dependence: BounceRates",
+                                     xlab = "BounceRates",
+                                     ylab = "Predicted Probability") +  
+  ggtitle("XGB - Partial Dependence: BounceRates") +
+  theme(
+    plot.title = element_text(size = 3),      # main title font size
+    axis.title = element_text(size = 7),      # axis label font size
+    axis.text = element_text(size = 6)        # axis tick font size
+  )
+              
+
+# Combine XGB PDP plots in one grid
+grid.arrange(xgb_pdp_pagevalues_plot, xgb_pdp_exitrates_plot, xgb_pdp_bouncerates_plot, ncol = 3)
+
+
+
+
+```
+
+PageValues Both models show that lower PageValues are associated with a higher probability of conversion, which then levels off as PageValues increase. This suggests users who engage efficiently are more likely to purchase, while high PageValues may indicate indecision or browsing without buying.
+
+ExitRates As ExitRates increase (up to a point), the probability of conversion rises in both models. This could indicate users exiting after completing a purchase or navigating efficiently to conversion points.
+
+BounceRates Conversion probability initially increases with BounceRates, possibly reflecting users who quickly find and buy what they need. After a threshold, higher BounceRates flatten out, often linked to lower engagement and reduced purchase likelihood.
+
+PageValues, ExitRates, and BounceRates were chosen because they ranked highest in feature importance for both Random Forest and XGBoost. They represent key user behaviors tied to engagement and purchase intent.
+
+# [***Question 3***]{.underline}
+
+### [***Part A***]{.underline}
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Question 3 - Optimizing F1 score
+# a) 
+set.seed(123)
+
+# Defining thresholds to test
+thresh_values <- seq(0.01, 0.99, by = 0.01)
+
+# Function to compute F1 scores for different thresholds
+compute_f1 <- function(probabilities, actual, thresholds) {
+  sapply(thresholds, function(tau) {
+    preds <- ifelse(probabilities > tau, 1, 0)
+    cm <- confusionMatrix(factor(preds, levels = c(0, 1)), factor(actual, levels = c(0, 1)), positive = "1")
+    return(cm$byClass["F1"])
+  })
+}
+
+# Computing F1 curves for all models
+f1_curves <- list(
+  Logistic_Linear = compute_f1(logreg_probabilities, valid$Revenue, thresh_values),
+  Logistic_Nonlinear = compute_f1(logreg_poly_probabilities, valid$Revenue, thresh_values),
+  KNN = compute_f1(knn_probabilities, valid$Revenue, thresh_values),
+  Classification_Tree = compute_f1(tree_probabilities, valid$Revenue, thresh_values),
+  Random_Forest = compute_f1(rf_probabilities, valid$Revenue, thresh_values),
+  XGB = compute_f1(xgb_probabilities, valid$Revenue, thresh_values)
+)
+
+
+
+# Plotting the F1 score curves
+par(mfrow = c(2, 3), cex.main = 0.5)
+for (model_name in names(f1_curves)) {
+  curve <- f1_curves[[model_name]]
+  max_f1_index <- which.max(curve)
+  max_f1_tau <- thresh_values[max_f1_index]
+  plot(thresh_values, curve, type = "l", main = paste(model_name, "F1 vs Threshold"), xlab = "Threshold (τ)", ylab = "F1 Score")
+  abline(v = max_f1_tau, col = "blue", lty = 2, lwd = 2)
+}
+```
+
+### [***Part B***]{.underline}
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# b)
+library(pROC)
+
+prob_list <- list(
+  Logistic_Linear = logreg_probabilities,
+  Logistic_Nonlinear = logreg_poly_probabilities,
+  KNN = knn_probabilities,
+  Classification_Tree = tree_probabilities,
+  Random_Forest = rf_probabilities,
+  XGB = xgb_probabilities
+)
+
+par(mfrow = c(2, 3), cex.main = 0.4)
+for (model_name in names(prob_list)) {
+  probs <- prob_list[[model_name]]
+  roc_obj <- roc(valid$Revenue, probs)
+  plot(roc_obj, main = paste(model_name, "ROC Curve"))
+  
+  # Add max F1 point
+  max_f1_index <- which.max(f1_curves[[model_name]])
+  max_tau <- thresh_values[max_f1_index]
+  max_f1 <- round(f1_curves[[model_name]][max_f1_index], 3)
+  
+  closest_idx <- which.min(abs(roc_obj$thresholds - max_tau))
+  fpr <- 1 - roc_obj$specificities[closest_idx]
+  tpr <- roc_obj$sensitivities[closest_idx]
+  
+  points(fpr, tpr, col = "blue", pch = 20, cex = 1.5)
+  text(fpr, tpr, labels = paste0("F1=", max_f1, "\nτ=", round(max_tau, 2)), pos = 4, cex = 0.8)
+}
+```
+
+### [***Part C***]{.underline}
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# c)
+max_f1_table <- do.call(rbind, lapply(names(f1_curves), function(model_name) {
+  max_idx <- which.max(f1_curves[[model_name]])
+  data.frame(
+    Model = model_name,
+    Max_F1 = round(f1_curves[[model_name]][max_idx], 4),
+    Optimal_Tau = round(thresh_values[max_idx], 2)
+  )
+}))
+print(max_f1_table)
+
+
+```
+
+# [***Question 4***]{.underline}
+
+### [***Part A***]{.underline}
+
+The XGBoost model was chosen because it had the best F1 score out of all the models that were evaluated, according to the validation results. This suggests that, for unseen data, it provided the ideal balance between recall and precision . Additionally, threshold-tuning analysis was used to optimise the decision threshold (τ) to 0.26 in order to maximise the F1 score. Predictions were then produced by applying the model to the test data that was unseen.
+
+### [***Part B***]{.underline}
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+test <- read.csv("~/Downloads/online_shopping_testing.csv")
+test$Month <- factor(test$Month, levels = levels(train$Month))
+test$OperatingSystems <- factor(test$OperatingSystems, levels = levels(train$OperatingSystems))
+test$Browser <- factor(test$Browser, levels = levels(train$Browser))
+test$VisitorType <- factor(test$VisitorType, levels = levels(train$VisitorType))
+test$Weekend <- factor(test$Weekend, levels = levels(train$Weekend))
+
+xgb_probabilities_test <- predict(xgb_model, newdata = test, type = "prob")[,2]
+xgb_predictions_test <- ifelse(xgb_probabilities_test > 0.26, 1, 0)
+submission_xgb <- data.frame(xgb_predictions_test)
+write.table(submission_xgb,
+            file = "PLLTHA036 BSNTRO001.csv",
+            sep = ",",
+            row.names = FALSE,
+            col.names = FALSE)
+
+
+
+
+
+```

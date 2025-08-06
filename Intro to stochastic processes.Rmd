@@ -1,0 +1,311 @@
+---
+title: "ISP Question 1"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    number_sections: true
+  html_document:
+    df_print: paged
+date: "2025-05-18"
+header-includes:
+  - \usepackage{booktabs}
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+### Question 1:
+
+[**1a**]{.underline}:
+
+The rat's movement through the maze satisfies the defining properties of
+a discrete-time Markov chain: - Discrete states: The maze only has a
+finite number of compartments. The rat is in one of these compartments
+at any time. So the state space is: U = {1,2,3,4,5,6,7,8,9}, therefore,
+we can see that the state space is discrete and countable. - Discrete
+steps of time: The rat moves from one compartment to another compartment
+one step at a time. Therefore, the rat's movements occurs at countable
+time intervals. - Markov property: The probability of the rat's next
+move is dependent only on its current position, and not on the history
+of how it got to the current room. This defines the Markov property:
+
+$$
+P(X_{t+1} = j \mid X_t = i, X_{t-1}, \dots, X_0) = P(X_{t+1} = j \mid X_t = i)
+$$ - **Fixed transition probabilities**: The only factors influencing
+the transition probabilities are the present location and the movement
+type (vertical or horizontal), which remains constant throughout: The
+probability of horizontal moves is double that of vertical ones and a
+transition matrix can be created since these probabilities are known and
+fixed.
+
+[**1b**]{.underline}: One-step transition probability matrix:
+
+```{r echo=FALSE}
+# libraries
+library(knitr)
+library(kableExtra)
+library(tibble)  
+
+# Define neighbors based on the diagram
+get_neighbors <- function(state) {
+  neighbors <- list(
+    `1` = c(2, 6),
+    `2` = c(1, 3, 5),
+    `3` = c(2, 4),
+    `4` = c(3, 5, 9),
+    `5` = c(2, 4, 6, 8),
+    `6` = c(1, 5, 7),
+    `7` = c(6, 8),
+    `8` = c(5, 7, 9),
+    `9` = c(4, 8)
+  )
+  return(neighbors[[as.character(state)]])
+}
+
+# Define which transitions are horizontal 
+is_horizontal <- function(i, j) {
+  horizontal_pairs <- list(
+    `1` = c(2), `2` = c(1, 3), `3` = c(2),
+    `4` = c(5), `5` = c(4, 6), `6` = c(5),
+    `7` = c(8), `8` = c(7, 9), `9` = c(8)
+  )
+  return(j %in% horizontal_pairs[[as.character(i)]])
+}
+
+# Initialize and build the transition probability matrix P
+n_states <- 9
+P <- matrix(0, nrow = n_states, ncol = n_states)
+
+for (i in 1:n_states) {
+  neighbors <- get_neighbors(i)
+  weights <- ifelse(is_horizontal(i, neighbors), 2, 1)
+  probs <- weights / sum(weights)
+  P[i, neighbors] <- probs
+}
+
+# display
+rownames(P) <- colnames(P) <- as.character(1:9)
+P_df <- as.data.frame(P)
+P_df <- rownames_to_column(P_df, var = "State")
+
+# Round only the numeric values (excluding State column)
+P_df_rounded <- P_df
+P_df_rounded[ , -1] <- round(P_df_rounded[ , -1], 2)
+
+# Display with proper row names
+kbl(P_df_rounded, caption = "Transition Probability Matrix P for the Maze")
+
+```
+
+[**1c**]{.underline}: A markov chain is regular if there exists a n such
+that: $p_{ij}^{(n)} > 0$ for all $i, j$ That is, the matrix $P^{(n)}$
+has strictly positive entries only (greater than 0)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# Load required package
+library(expm)
+library(knitr)
+library(tibble)
+
+# Define W based on the maze diagram as a 9x9 binary matrix
+W <- matrix(c(
+  0,1,0,0,1,0,0,0,0,
+  1,0,1,0,1,0,0,0,0,
+  0,1,0,1,0,0,0,0,1,
+  0,0,1,0,1,0,0,0,1,
+  0,1,0,1,0,1,0,1,0,
+  0,0,0,0,1,0,1,0,1,
+  0,0,0,0,0,1,0,1,0,
+  0,0,0,0,1,0,1,0,1,
+  0,0,1,1,0,1,0,1,0
+), nrow = 9, byrow = TRUE)
+
+# Raise W to the 8th power
+W_8 <- W %^% 8
+
+# Convert to a data frame with row labels for nice printing
+W_8_df <- as.data.frame(W_8)
+W_8_df <- rownames_to_column(W_8_df, var = "From")
+
+# Label columns for display
+colnames(W_8_df)[-1] <- paste0("To_", 1:9)
+
+# Display the matrix using kable
+kbl(W_8_df, caption = "W⁸ Matrix: Number of 8-step Paths Between Compartments")
+
+```
+
+Interpretation: Since there does exist an n for which all entries of
+$P^{(n)}$ are greater than 0, the markov chain is regular. For example
+for n=8, for every beginning state, the rat will be able to each any
+other compartment, not regarding the probability for the moment.
+
+[**1d**]{.underline}: A markov chain is irreducible if the entire state
+space consists of a single equivalence class, meaning all states in the
+space communicate with each other. So $p_{ij}^{(n)} > 0$ and
+$p_{ji}^{(m)} > 0$ for some n,m.
+
+```{r}
+
+# Checking if all entries are > 0 in powers up to k_max
+is_irreducible <- function(P, m_max = 10) {
+  n <- nrow(P)
+  reach_matrix <- matrix(0, n, n)  
+
+  Pm <- P
+  for (m in 1:m_max) {
+    reach_matrix <- reach_matrix + (Pm > 0)  
+    Pm <- Pm %*% P  # moving to next power
+  }
+
+  all(reach_matrix > 0)  # if TRUE, then irreducible
+}
+
+is_irreducible(P)
+
+
+```
+
+This markov chain is irreducible since we are able to identify that all
+states communicate with each other as well as it being a closed
+space(there are no states outside of U, being all the compartments)
+
+[**1e**]{.underline}: Stationary distribution: The stationary
+distribution of a Markov chain is a probability vector
+$\boldsymbol{\pi}$ that satisfies the following condition:
+
+$$
+\boldsymbol{\pi}^T P = \boldsymbol{\pi}^T
+$$
+
+along with the constraint:
+
+$$
+\sum_{i=1}^9 \pi_i = 1
+$$
+
+If a Markov chain is finite, irreducible, and aperiodic, then the
+stationary distribution exists, is unique, and has strictly positive
+entries.
+
+The number of steps increases, the transition matrix raised to a power
+converges to a matrix with identical rows, each equal to
+$\boldsymbol{\pi}^T$:
+
+$$
+\lim_{n \to \infty} P^n = \mathbf{1} \boldsymbol{\pi}^T
+$$
+
+So in the long run, the chain spends a proportion $\pi_i$ of time in
+state $i$, regardless of the starting state.
+
+```{r}
+A <- t(P) - diag(9)
+
+A[9, ] <- rep(1, 9)
+b <- c(rep(0, 8), 1)
+
+# Solve for stationary distribution
+pi_stat <- solve(A, b)
+
+# display the result
+names(pi_stat) <- paste0("π", 1:9)
+round(pi_stat, 4)
+```
+
+1f:
+
+```{r}
+# Verify that pi is stationary: pi %*% P should equal pi
+piP <- as.numeric(pi_stat %*% P)
+
+
+verification_df <- data.frame(
+  State = 1:9,
+  pi_original = round(pi_stat, 6),
+  pi_times_P = round(piP, 6),
+  Difference = round(pi_stat - piP, 8)
+)
+
+# Display the verification table
+knitr::kable(verification_df, caption = "Verification of Stationary Distribution: πP ≈ π")
+
+
+
+
+
+```
+
+To verify that the distribution found is stationary, we compute:
+
+$$
+\boldsymbol{\pi}^T P
+$$
+
+and compare it to $\boldsymbol{\pi}^T$ itself. If the difference is
+negligible , then the condition
+
+$$
+\boldsymbol{\pi}^T P = \boldsymbol{\pi}^T
+$$
+
+is satisfied. The resulting vectors confirm that the computed
+distribution is indeed the stationary distribution of the Markov chain.
+
+1g: The mean return time is $\mu_i = \frac{1}{\pi_i}$ and the variance
+is $\sigma_i^2 = \frac{1 - \pi_i}{\pi_i^2}$.
+
+```{r}
+mean_M <- 1/pi_q[,7]
+variance_M <- (1-pi_q[,7])/((pi_q[,7])^2)
+
+mean_variance <- cbind(mean_M, variance_M)
+mean_variance
+
+```
+
+1h:
+
+```{r}
+
+library(expm)
+
+# Build transition possibility matrix W 
+W <- ifelse(P > 0, 1, 0)
+
+# Raise W to the 8th power to count number of 8-step paths
+W8 <- W %^% 8
+w_8_71 <- W8[7, 1]
+w_8_71  
+
+# Construct adjacency list for traversal
+adj_list <- lapply(1:9, function(i) which(W[i, ] == 1))
+
+# Recursive function to find all paths of a fixed length
+find_paths <- function(current, goal, length, path = c()) {
+  path <- c(path, current)
+  if (length == 0) {
+    return(if (current == goal) list(path) else list())
+  }
+  paths <- list()
+  for (next_state in adj_list[[current]]) {
+    new_paths <- find_paths(next_state, goal, length - 1, path)
+    paths <- c(paths, new_paths)
+    if (length(paths) >= 10) break  # stop after 10 paths
+  }
+  return(paths)
+}
+
+# Get up to 10 paths from state 7 to 1 in exactly 8 steps
+set.seed(1)
+paths_7_to_1 <- find_paths(7, 1, 8)
+
+# Display the paths
+paths_7_to_1[1:min(10, length(paths_7_to_1))]
+
+
+```
+
+Interpretation: There are multiple ways the rat can move from
+compartment 7 to compartment 1 in 8 steps as observed from the code.

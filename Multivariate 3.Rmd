@@ -1,0 +1,92 @@
+---
+title: "CA6"
+output: pdf_document
+date: "2025-03-27"
+---
+
+```{r}
+# Question 1
+
+# Loading libraries
+library(readr)
+library(car)
+library(biotools)
+library(MASS)
+
+# Loading data
+CA1 <- read.csv("~/Downloads/CA1.csv")
+
+CA1$Period <- as.factor(CA1$TimePeriod)
+
+
+# Extracting numeric variables only
+numeric_data <- CA1[, !(names(CA1) %in% c("TimePeriod", "Period"))]
+
+
+# 1a. Box’s M-test
+
+boxM_result <- boxM(numeric_data, CA1$Period)
+print(boxM_result)
+
+# 1b. One-Way MANOVA
+
+manova_model <- manova(as.matrix(numeric_data) ~ Period, data = CA1)
+
+# Multivariate test (Wilks’ Lambda)
+summary(manova_model, test = "Wilks")
+
+# Following up ANOVAs for individual variables
+summary.aov(manova_model)
+
+
+
+
+```
+
+
+
+
+```{r}
+# Question 2
+
+# Loading libraries
+library(readr)
+library(dplyr)
+library(car)
+
+
+fabric_data <- read.table("~/Downloads/CA6.txt", header = TRUE)
+
+# Converting variables to factors
+fabric_data$Proportion <- as.factor(fabric_data$Proportion)
+fabric_data$Filler <- as.factor(fabric_data$Filler)
+
+
+# 2a: MANOVA
+
+# Multivariate model
+manova_model2 <- manova(cbind(y1, y2, y3) ~ Proportion * Filler, data = fabric_data)
+summary(manova_model2, test = "Wilks")
+
+
+# Individual ANOVAs
+
+summary(aov(y1 ~ Proportion * Filler, data = fabric_data))
+summary(aov(y2 ~ Proportion * Filler, data = fabric_data))
+summary(aov(y3 ~ Proportion * Filler, data = fabric_data))
+
+# 2c: Minimize wear in final 1000 revs (y3)
+
+boxplot(y3 ~ interaction(Proportion, Filler), data = fabric_data,
+        main = "Fabric wear in final 1000 Revolutions (y3)",
+        xlab = "Proportion x Filler", ylab = "Wear")
+
+# Enhancing visualisation 
+
+interaction.plot(fabric_data$Proportion, fabric_data$Filler, fabric_data$y3,
+                 main = "Interaction plot for y3",
+                 xlab = "Proportion", ylab = "Wear (y3)", col = 1:2, lty = 1:2)
+
+
+
+```

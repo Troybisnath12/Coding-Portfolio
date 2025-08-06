@@ -1,0 +1,95 @@
+---
+title: "Multivariate Analysis methods 1"
+output: pdf_document
+date: "2025-03-02"
+---
+
+```{r}
+# Question 1
+
+
+#Load library
+
+library(ggplot2)
+library(tidyverse)
+
+
+# load dataset
+data <- read.csv("CA2.csv")
+X <- as.matrix(data)
+
+# Perform Singular Value Decomposition
+svd_result <- svd(X)
+U <- svd_result$u
+D <- svd_result$d
+V <- svd_result$v
+
+# Function to compute rank-k approximation
+rank_k_approx <- function(k) {
+  return(U[, 1:k] %*% diag(D[1:k]) %*% t(V[, 1:k]))
+}
+
+# Compute approximation error for rank 4
+X_4 <- rank_k_approx(4)
+delta_4 <- X - X_4
+mean_error_4 <- colMeans(delta_4)
+print("Mean vector of approximation error for rank 4:")
+print(mean_error_4)
+
+```
+
+
+```{r}
+
+#Question 2
+
+# Compare correlation matrices
+cor_X <- cor(X)
+cor_X2 <- cor(rank_k_approx(2))
+print("Correlation matrix of original X:")
+print(cor_X)
+print("Correlation matrix of rank 2 approximation:")
+print(cor_X2)
+
+
+
+```
+
+
+```{r}
+
+#Question 3
+# Question 3
+# Compute Frobenius norms
+frobenius_norms <- sapply(1:12, function(k) {
+  approx_X <- rank_k_approx(k)
+  sqrt(sum((X - approx_X)^2))
+})
+
+# Plot Frobenius norms
+ggplot(data.frame(k = 1:12, norm = frobenius_norms), aes(x = k, y = norm)) +
+  geom_line() +
+  geom_point() +
+  ggtitle("Frobenius Norm vs Rank") +
+  xlab("Rank") +
+  ylab("Frobenius Norm")
+
+```
+
+
+```{r}
+# Question 4:
+# Compute percentage of total variation retained
+var_explained <- cumsum(svd_result$d^2) / sum(svd_result$d^2) * 100
+
+# Plot percentage of total variation retained
+ggplot(data.frame(k = 1:12, variation = var_explained[1:12]), aes(x = k, y = variation)) +
+  geom_line() +
+  geom_point() +
+  ggtitle("Percentage of Total Variation Retained") +
+  xlab("Rank") +
+  ylab("Variation (%)")
+
+
+
+```

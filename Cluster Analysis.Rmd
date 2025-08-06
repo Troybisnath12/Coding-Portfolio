@@ -1,0 +1,934 @@
+---
+title: "Cluster Analysis"
+author: "Thashin Pillay, Troy Bisnath"
+date: "`r Sys.Date()`"
+output: bookdown::pdf_document2
+---
+
+\newpage
+
+# [**Exploratory Data Analysis**]{.underline}
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(ggplot2)
+library(GGally)     
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+
+data <- read.table("STA4026_Assignment_Clustering.txt")
+str(data)
+summary(data)
+colSums(is.na(data))
+```
+
+From preliminary data analysis it was observed that our data was made up of two variables,namely, V1 and V2 with 5000 observations. These variables are both integers and contain no missing or null values. Based on the summary of the values from V1 and V2, there is no reason to believe they are of different scales and therefore, we will most likely not have to rescale the data.
+
+```{r echo=FALSE, fig.height=3, fig.width=7, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Pair plot 
+ggpairs(data, title = "Pair Plot of V1 and V2")
+```
+
+```{r echo=FALSE, fig.height=3, fig.width=7, message=FALSE, warning=FALSE}
+# Alternatively, univariate histograms + density plots
+p1 <- ggplot(data, aes(x = V1)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "skyblue", color = "black") +
+  geom_density(color = "red", linewidth = 1) +
+  ggtitle("Distribution of V1")
+
+p2 <- ggplot(data, aes(x = V2)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "skyblue", color = "black") +
+  geom_density(color = "red", linewidth = 1) +
+  ggtitle("Distribution of V2")
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+```{r echo=FALSE, fig.height=3, fig.width=5, message=FALSE, warning=FALSE}
+# Scatter plot
+scatter <- ggplot(data, aes(x = V1, y = V2)) +
+  geom_point(alpha = 0.5) +
+  ggtitle("Scatterplot of V1 vs V2") +
+  theme_minimal()
+scatter
+
+```
+
+We then take note of the distributions of each variable through pair plots, as well as the histograms with density plots. We also take a closer look at the scatter plots for the observations with the two variables. From this we see that V1 is roughly symmetric while V2 is right-skewed. Both V1 and V2 are multimodal and have multiple peaks that point towards the direction that clustering will be effective as these are most likely sub-groups. The scatterplot shows clear grouping of vertical and horizontal lines (banding) and diagonal shapes, with non-uniform density regions. The pair plot correlation of V1 and V2 is low: 0.069.
+
+The weak linear correlation means there's no strong linear relationship, so we don’t expect collinearity to distort clustering. The two variables V1 and V2 in our dataset are already expressed in comparable units with somewhat comparable ranges and standard deviations, despite the fact that clustering techniques such as k-means are sensitive to scale. Therefore, in order to preserve interpretability in the original scale, we proceed with the raw data and standardization is not necessarily required. Based on this as well as no strong correlation, we decide that Euclidean distances are most suitable for our clustering metric.
+
+```{r echo=FALSE, fig.height=3, fig.width=7, message=FALSE, warning=FALSE}
+# Compute pairwise Euclidean distance matrix
+distance_matrix <- dist(data, method = "euclidean")
+
+# Convert to a vector for plotting
+distance_vector <- as.vector(distance_matrix)
+
+# Plot histogram and density of pairwise distances
+library(ggplot2)
+distance_df <- data.frame(Distance = distance_vector)
+
+ggplot(distance_df, aes(x = Distance)) +
+  geom_histogram(bins = 50, fill = "lightblue", color = "black") +
+  geom_density(color = "red", linewidth = 1) +
+  ggtitle("Distribution of Pairwise Euclidean Distances") +
+  theme_minimal()
+```
+
+With the majority of distances centered between 200,000 and 400,000 and peaking just over 250,000, the histogram of pairwise Euclidean distances has a broadly "unimodal" distribution. This suggests that observations tend to be relatively separated from one another. The distribution additionally shows a long right tail, which suggests the presence of some less dense or extreme observations, though not heavily. The shape is in line with data that has a few more widely separated points in addition to closely packed clusters, which is a structure that works well for clustering. Outliers or inter-cluster distances may be shown by the long tail, which suggests that some locations are significantly farther apart. Due to the possibility of natural splitting between some groups, this type of distribution leads up to the use of distance-based clustering techniques such as k-means and k-medoids.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Standardize the data
+z_data <- scale(data)
+
+# Compute max absolute z-score for each observation
+max_z <- apply(abs(z_data), 1, max)
+
+# Identify top 10 potential outliers based on max z-score
+outlier_indices <- order(max_z, decreasing = TRUE)[1:10]
+outlier_values <- data[outlier_indices, ]
+
+# Display the outliers
+outlier_values
+```
+
+We used z-scores to standardize our data and searched for the top 10 points to check for outlier values. In these observations, V1 or V2 is much greater or lower than normal. One of the points, for example, had a V2 value of only 9,597, which is extremely low in comparison to the majority of the points, while another had a value of about 977,215, which is close to the maximum. These outliers have significance because they may have an impact on the behavior of our clustering algorithms. For example, K-means may be pushed toward these extreme values, potentially affecting the clusters, because it attempts to minimize distances to the average point, or the mean. These outliers can raise the average distance between points and widen the range of values, despite the lack of them. We keep these values in the data for now, but will see how they disort our cluster analysis by comparing with vs without outliers.
+
+\newpage
+
+# [**Hyper-parameter tuning**]{.underline}
+
+K-Means and K-Medoids are two clustering techniques used in hyper-parameter tuning to examine algorithm stability and optimal cluster quantity (K). The Gap Statistic, initialisation sensitivity, and silhouette analysis are used in the evaluation. Finding stable configurations that result in significant clusters in a high-dimensional, standardised feature space is the ultimate objective.
+
+```{r silhouette-analysis, echo=FALSE, fig.height=3, fig.width=7, message=FALSE, warning=FALSE, cache=TRUE}
+
+library(cluster)      
+library(factoextra)  
+library(ggplot2)
+
+dat <- data <- read.table("STA4026_Assignment_Clustering.txt", header = FALSE)
+colnames(dat) <- c("x", "y")
+data_scaled <- scale(dat)
+
+# function of average silhouette width for k-means
+sil_kmeans <- function(dat, k) {
+  km <- kmeans(dat, centers = k, nstart = 25)
+  ss <- silhouette(km$cluster, dist(dat))
+  mean(ss[, 3])
+}
+# function of average silhouette width for k-medoids
+sil_kmedoids <- function(dat, k) {
+  pam_fit <- pam(dat, k = k, pamonce = 5)
+  ss <- silhouette(pam_fit$clustering, dist(dat))
+  mean(ss[, 3])
+}
+# silhouette scores for k = 2 to 20
+k_vals <- 2:20
+kmeans_score <- sapply(k_vals, function(k) sil_kmeans(data_scaled, k))
+kmedoids_score <- sapply(k_vals, function(k) sil_kmedoids(data_scaled, k))
+
+# combining into data frame
+results <- data.frame(
+  K = rep(k_vals, 2),
+  Method = rep(c("K-means", "K-medoids"), each = length(k_vals)),
+  Silhouette = c(kmeans_score, kmedoids_score)
+)
+
+# plotting silhouette scores
+ggplot(results, aes(x = K, y = Silhouette, color = Method, shape = Method)) +
+  geom_line() +
+  geom_point(size = 3) +
+  labs(title = "Average Silhouette Score vs Number of Clusters (K)",
+       x = "Number of Clusters (K)",
+       y = "Average Silhouette Score") +
+  theme_minimal() +
+  theme(text = element_text(size = 12))
+
+
+
+```
+
+Across a range of cluster values from K=2 to K=20, the figure shows the average silhouette scores for K-means and K-medoids clustering. Higher values suggest more compact and well-separated clusters. The silhouette score shows how well each point lies within its cluster. For K-means, the silhouette score increases gradually and peaks at K=15 with a score of around 0.4790, indicating that, in terms of separation, this is the ideal number of clusters. K=16 has a secondary high score of 0.4748, which makes it a good substitute. For K-medoids, the silhouette score peaks at K=15 with a score of 0.4784, followed closely by K=16, at 0.4757. This implies that the clustering structure across both algorithms is consistent. Our Selected K values:
+
+K-means: Primary: K = 15, Secondary: K = 16.
+
+K-medoids: Primary: K = 15, Secondary: K = 16.
+
+The reliability of this selection is strengthened by the optimal K's similarity between the two methods.
+
+```{r echo=FALSE, fig.height=3, fig.width=7, message=FALSE, warning=FALSE, , echo=FALSE, cache=TRUE}
+
+set.seed(123)  
+library(cluster)
+library(ggplot2)
+
+set.seed(123)
+K_vals <- c(15, 16)
+runs <- 100
+
+# K-means multiple runs
+kmeans_runs <- function(dat, k, runs) {
+  replicate(runs, {
+    km <- kmeans(dat, centers = k, nstart = 1)
+    ss <- silhouette(km$cluster, dist(dat))
+    mean(ss[, 3])
+  })
+}
+
+# k-medoids multiple runs
+kmedoids_runs_clara <- function(dat, k, runs) {
+  replicate(runs, {
+    result <- tryCatch({
+      shuffled_data <- dat[sample(1:nrow(dat)), ]  
+      clara_fit <- clara(shuffled_data, k = k)
+      ss <- silhouette(clara_fit$clustering, dist(shuffled_data))
+      mean(ss[, 3])
+    }, error = function(e) NA)
+    result
+  })
+}
+
+# Run for each K
+results_list <- lapply(K_vals, function(k) {
+  km_scores <- kmeans_runs(data_scaled, k, runs)
+  pam_scores <- kmedoids_runs_clara(data_scaled, k, runs)
+
+  data.frame(
+    Silhouette = c(km_scores, pam_scores),
+    Method = rep(c("K-means", "K-medoids"), each = runs),
+    K = factor(k)
+  )
+})
+
+sensitivity_data <- bind_rows(results_list)
+
+# Plot 1: Density
+p1 <- ggplot(sensitivity_data, aes(x = Silhouette, fill = Method)) +
+  geom_density(alpha = 0.4) +
+  facet_wrap(~K, ncol = 2) +
+  labs(title = "Density of Silhouette Scores",
+       x = "Silhouette Score", y = "Density") +
+  theme_minimal() +
+  scale_fill_manual(values = c("K-means" = "red", "K-medoids" = "blue"))
+
+# Plot 2: ECDF
+p2 <- ggplot(sensitivity_data, aes(x = Silhouette, color = Method)) +
+  stat_ecdf(geom = "step", linewidth = 1.2) +
+  facet_wrap(~K, ncol = 2) +
+  labs(title = "ECDF of Silhouette Scores",
+       x = "Silhouette Score", y = "Cumulative Proportion") +
+  theme_minimal() +
+  scale_color_manual(values = c("K-means" = "red", "K-medoids" = "blue"))
+
+
+p1 
+
+p2
+
+
+
+```
+
+The effect of initialisation on clustering stability was investigated by running K-means and K-medoids 100 times at K=15 and K=16. The consistency of clustering quality was assessed by calculating the average silhouette score for each run. K-means is moderately sensitive to initialisation, according to the results. A few outliers had silhouette scores as low as 0.435, while the majority of runs had scores above 0.46. This unpredictability supports the use of a bigger number of "nstart" in practice and is predicted given the random selection of starting centroids. K-medoids, on the other hand showcases a gradual rise reaching the same peak as k-means. This implies that the algorithm converged to the same optimal medoid structure for this dataset and parameter setting. Therefore, based on these results:
+
+The most stable,optimal configurations are:
+
+K-means: Primary: K = 15, Secondary: K = 16.
+
+K-medoids: Primary: K = 15, Secondary: K = 16.
+
+While K-medoids consistently yields the same score, demonstrating lower variability to initialisation, K-means shows a lot of variability in silhouette score based on initialisation. For K-medoids, the flat-like line shows convergence.
+
+```{r part-c-parallel-inits, echo=FALSE, fig.height=6, fig.width = 12, message=FALSE, warning=FALSE, cache=TRUE}
+
+library(cluster)
+library(future.apply)
+library(ggplot2)
+# Set up parallel processing
+future::plan(multisession)
+
+# Scale data (if not already)
+data_scaled <- scale(dat, center = TRUE, scale = FALSE)
+
+# Precompute distance matrix for k-means
+dist_mat <- dist(data_scaled)
+
+# Parameters
+runs <- 500
+K_vals <- c(15, 16)
+
+# Parallelised K-means function
+kmeans_sensitivity_parallel <- function(dat, k, runs) {
+  future_sapply(1:runs, function(i) {
+    km <- kmeans(dat, centers = k, nstart = 1)
+    ss <- silhouette(km$cluster, dist_mat)
+    mean(ss[, 3])
+  }, future.seed = TRUE)
+}
+
+# Parallelised K-medoids function 
+kmedoids_sensitivity_parallel <- function(dat, k, runs) {
+  future_sapply(1:runs, function(i) {
+    tryCatch({
+      shuffled_data <- dat[sample(1:nrow(dat)), ]  
+      clara_fit <- clara(shuffled_data, k = k)
+      ss <- silhouette(clara_fit$clustering, dist(shuffled_data))
+      mean(ss[, 3])
+    }, error = function(e) NA)
+  }, future.seed = TRUE)
+}
+
+# Run both methods
+kmeans_large <- lapply(K_vals, function(k) kmeans_sensitivity_parallel(data_scaled, k, runs))
+kmedoids_large <- lapply(K_vals, function(k) kmedoids_sensitivity_parallel(data_scaled, k, runs))
+
+# Combine into data frames
+df_kmeans_large <- data.frame(
+  Silhouette = unlist(kmeans_large),
+  K = factor(rep(K_vals, each = runs)),
+  Method = "K-means"
+)
+
+df_kmedoids_large <- data.frame(
+  Silhouette = unlist(kmedoids_large),
+  K = factor(rep(K_vals, each = runs)),
+  Method = "K-medoids"
+)
+
+# Merge into one dataset
+sensitivity_parallel <- rbind(df_kmeans_large, df_kmedoids_large)
+
+# Factor level ordering
+sensitivity_parallel$Method <- factor(sensitivity_parallel$Method,
+                                      levels = c("K-means", "K-medoids"))
+
+# Plot
+ggplot(sensitivity_parallel, aes(x = K, y = Silhouette, fill = Method)) +
+  geom_boxplot(position = position_dodge(0.7), width = 0.6,
+               outlier.shape = NA, alpha = 0.8) +
+  geom_jitter(aes(color = Method),
+              position = position_jitterdodge(jitter.width = 0.25, dodge.width = 0.7),
+              alpha = 0.4, size = 1.2) +
+  stat_summary(fun = median, geom = "crossbar",
+               aes(group = Method),
+               position = position_dodge(0.7),
+               width = 0.4, fatten = 2, color = "black") +
+  labs(title = "Sensitivity to Initialization (500 runs, Parallelised)",
+       y = "Average Silhouette Score",
+       x = "Number of Clusters (K)") +
+  theme_minimal() +
+  theme(text = element_text(size = 12)) +
+  scale_fill_manual(values = c("K-means" = "red", "K-medoids" = "blue")) +
+  scale_color_manual(values = c("K-means" = "red", "K-medoids" = "blue"))
+
+```
+
+We performed 500 parallel runs of the K-means and K-medoids algorithms at K=15 and K=16 in order to assess the clustering algorithms' reliability under repetitive initialisation. The boxplot that goes with it shows the results. The sensitivity of K-means to the initial centroid placement was shown by the variation in silhouette scores across runs. This variability emphasises how important it is to choose strong initialisation techniques or use several beginnings (nstart \> 1) in order to reduce the possibility of convergence to worse off local minima.
+
+```{r part-d-gap-statistic, echo=FALSE, fig.height=6, fig.width = 12,message=FALSE, warning=FALSE, cache=TRUE}
+
+library(cluster)
+library(factoextra)
+
+
+set.seed(123)
+
+# gap statistic for K-means clustering (K = 2 to 20)
+gap_kmeans <- clusGap(data_scaled, FUN = kmeans, K.max = 17,
+                      B = 100, nstart = 10)
+
+# visualising the gap statistic
+fviz_gap_stat(gap_kmeans) +
+  labs(title = "Gap Statistic for K-means Clustering",
+       x = "Number of Clusters (K)",
+       y = "Gap Value") +
+  theme_minimal() +
+  theme(text = element_text(size = 12))
+
+```
+
+An evaluation to find the ideal number of clusters needed was also done through the gap statistic. The gap values climbed progressively and peaked at K=15, suggesting that this value offers the most separation between clusters in comparison to a random null reference. The significantly stronger, continuous growth beyond K=10 shows a more significant cluster structure, even though the original selection rule recommended K=3 because of a little early peak. The best option is confirmed by the persistent peak at K=15, which corresponds to the silhouette results. K=16 was a sensible backup choice because it was still competitive. The average silhouette scores for both K-means and K-medoids increased steadily using the silhouette method, reaching a high at K=15, suggesting compact and well-separated clusters. The clustering choice is more reliable when the outcomes from the two approaches are in agreement.
+
+\newpage
+
+# [**Cluster Analysis**]{.underline}
+
+We now seek to complete our analysis on the data by performing and interpreting the final cluster analyses based on the two configurations chosen and from there, infer what the best choice would be.
+
+```{r cluster-analysis-plots, fig.height=6, fig.width=12, message=FALSE, warning=FALSE, include=FALSE}
+
+library(cluster)
+library(factoextra)
+library(gridExtra)
+
+par(mfrow = c(2,4))
+
+K_vals <- c(15, 16)
+
+# Create empty lists to store plots
+silhouette_plots <- list()
+assignment_plots <- list()
+
+for (k in K_vals) {
+  # K-means
+  set.seed(123)
+  km <- kmeans(data_scaled, centers = k, nstart = 25)
+  ss_km <- silhouette(km$cluster, dist(data_scaled))
+  
+  silhouette_plots[[paste0("km_", k)]] <- fviz_silhouette(ss_km) +
+    ggtitle(paste("K-means Silhouette (K =", k, ")"))
+  
+  assignment_plots[[paste0("km_", k)]] <- fviz_cluster(list(data = data_scaled, cluster = km$cluster),
+                                                       geom = "point", ellipse.type = "convex") +
+    ggtitle(paste("K-means Clusters (K =", k, ")"))
+
+  # Clara (K-medoids)
+  clara_fit <- clara(data_scaled, k = k)
+  ss_clara <- silhouette(clara_fit$clustering, dist(data_scaled))
+
+  silhouette_plots[[paste0("clara_", k)]] <- fviz_silhouette(ss_clara) +
+    ggtitle(paste("K-medoids Silhouette (K =", k, ")"))
+  
+  assignment_plots[[paste0("clara_", k)]] <- fviz_cluster(list(data = data_scaled, cluster = clara_fit$clustering),
+                                                          geom = "point", ellipse.type = "convex") +
+    ggtitle(paste("K-medoids Clusters (K =", k, ")"))
+}
+
+
+
+
+```
+
+```{r echo=FALSE, fig.height=7, fig.width=12, message=FALSE, warning=FALSE}
+# Group silhouette plots
+grid.arrange(grobs = silhouette_plots, ncol = 4, top = "Silhouette Plots (K-means and Clara)")
+
+# Group cluster assignment plots
+grid.arrange(grobs = assignment_plots, ncol = 4, top = "Cluster Assignments (K-means and Clara)")
+```
+
+**K-means (K = 15 vs K = 16)**
+
+Silhouette Quality: The silhouette plot at K=15 indicates compact and well-separated clusters with largely high and constant silhouette widths, with most values exceeding 0.45. Some overlap is indicated by a few clusters with somewhat negative widths. The average silhouette width is still high at K=16, although its marginally less than it was at K=15. A few observations have near-zero or negative values, indicating considerable instability, and many clusters have moderate or narrow widths.
+
+Cluster Assignment: The boundaries on the K = 15 cluster map are distinct and somewhat well-separated. Clusters are small and visually distinct. There is a discernible rise in fragmentation for K = 16, even if the clusters are still reasonably well-separated. Some clusters have tighter grouping around medoid centres or overlapping boundaries, giving the impression that they are artificially separated.
+
+**K-medoids (K = 15 vs K =16)**
+
+Silhouette Quality: The silhouette plot is very consistent at K=15, with almost all clusters having high and stable silhouette widths that show little overlap or noise. There were no negative widths found, indicating strong cohesiveness. The silhouette quality is still good at K=16, although a little less reliable than at K=15. Some clusters have widths that are negative or almost zero, which could be a symptom of noisy separation or borderline assignments. Cluster Assignment: Clusters with K = 15 are very regular and visually cohesive. There are very few overlaps and geometrically compact cluster borders. Additional boundaries are introduced by K = 16, which show over-partitioning even if they are still visually interpretable. A number of clusters appear to be near to one another, which could suggest redundant separation.
+
+Best configuration: K-medoids with K = 15
+
+Clean cluster borders, minimal fluctuation across initialisations, and the best silhouette stability are all offered by this configuration. Within clusters, it exhibits strong cohesiveness and little overlap. Runner up: K-means with K = 15, still effective, but has higher sensitivity to initialization, as seen in the larger variation in silhouette widths.
+
+We now also seek to investigate outliers as well as their affects on these algorithms.
+
+```{r Outlier-Analysis, echo=FALSE, fig.cap="Silhouette Plot with Outliers Highlighted for K-means (K=15)", fig.height=5, fig.width=8, message=FALSE, warning=FALSE}
+library(gridExtra)
+par(mfrow=c(1,2))
+dist_mat <- dist(data_scaled)
+
+
+set.seed(123)
+km_fit <- kmeans(data_scaled, centers = 15, nstart = 25)
+
+#  silhouette scores
+sil <- silhouette(km_fit$cluster, dist_mat)
+sil_df <- as.data.frame(sil)
+
+outliers <- sil_df[sil_df$sil_width < 0, ]
+#cat("Outlier indices:\n")
+#print(outliers[, c("cluster", "neighbor", "sil_width")])
+
+# plot silhouette plot with outliers highlighted
+p1 <- ggplot(sil_df, aes(x = factor(cluster), y = sil_width)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.4, fill = "lightblue") +
+  geom_jitter(aes(color = sil_width < 0), width = 0.2, size = 2) +
+  scale_color_manual(values = c("black", "red"), labels = c("Normal", "Outlier")) +
+  labs(title = "Silhouette Scores with Outliers Highlighted",
+       x = "Cluster", y = "Silhouette Width", color = "Point Type") +
+  theme_minimal()
+
+# Create dataframe with cluster assignments and identify outliers
+plot_df <- as.data.frame(data_scaled)
+colnames(plot_df) <- c("V1", "V2")
+plot_df$Cluster <- factor(km_fit$cluster)
+plot_df$Outlier <- "Normal"
+plot_df$Outlier[as.numeric(rownames(outliers))] <- "Outlier"
+
+
+# Cluster plot with outliers highlighted
+p2 <- ggplot(plot_df, aes(x = V1, y = V2, color = Cluster, shape = Outlier)) +
+  geom_point(alpha = 0.7, size = 2) +
+  scale_shape_manual(values = c("Normal" = 16, "Outlier" = 17)) +
+  labs(title = "Cluster Assignments - Outliers(K-means,K=15)") +
+  theme_minimal()
+
+grid.arrange(p1,p2, ncol = 2)
+
+```
+
+Outliers identified in the initial silhouette plot are easily recognized by their low or negative silhouette widths, typically occurring on cluster outskirts where membership is ambiguous. These points appear isolated and do not significantly distort overall silhouette distributions. In the cluster assignment plot, they lie near overlapping boundaries, supporting their interpretation as transitional cases rather than misclassifications. Additional borderline cases with negative scores are also highlighted, but their influence remains minimal. Overall, clustering remains robust, with outliers having only a minor impact on structure.
+
+```{r post-processing-reassignment, echo=FALSE, fig.cap="Post-Processing", fig.height=5, fig.width=7, message=FALSE, warning=FALSE}
+# Extract negative silhouette observations
+neg_sil_points <- sil_df[sil_df$sil_width < 0, ]
+neg_indices <- as.numeric(rownames(neg_sil_points))
+
+# Original cluster assignments
+original_clusters <- km_fit$cluster
+
+#  cluster centers 
+cluster_centers <- km_fit$centers
+
+# distances from each negative silhouette point to each cluster center
+distances_to_centers <- as.matrix(dist(rbind(cluster_centers, data_scaled[neg_indices, ])))
+distances_to_centers <- distances_to_centers[(nrow(cluster_centers)+1):nrow(distances_to_centers), 1:nrow(cluster_centers)]
+
+# closest cluster 
+suggested_clusters <- sapply(seq_along(neg_indices), function(i) {
+  current_cluster <- original_clusters[neg_indices[i]]
+  dists <- distances_to_centers[i, ]
+  dists[current_cluster] <- Inf  
+  return(which.min(dists))
+})
+
+
+# compare old and new assignments
+post_proc_df <- data.frame(
+  Index = neg_indices,
+  OriginalCluster = original_clusters[neg_indices],
+  SuggestedCluster = suggested_clusters
+)
+
+# Reassign 
+temp_clusters <- original_clusters
+temp_clusters[neg_indices] <- suggested_clusters
+temp_sil <- silhouette(temp_clusters, dist_mat)
+temp_sil_df <- as.data.frame(temp_sil)
+new_avg_sil <- mean(temp_sil_df[, "sil_width"])
+
+# Plot comparison
+ggplot(temp_sil_df, aes(x = factor(cluster), y = sil_width)) +
+  geom_boxplot(fill = "lightgreen", alpha = 0.5, outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 1.5, alpha = 0.4) +
+  labs(title = "Silhouette Scores After Reassignment of Negative Points",
+       x = "Cluster", y = "Silhouette Width") +
+  theme_minimal()
+
+```
+We noticed a slight improvement in total silhouette width after manually moving the observations with negative silhouette scores to the closest alternate cluster. With fewer points close to or below zero, the revised silhouette plot displays clusters that are slightly smaller. Although the shift isn't significant, it implies that some points with low scores were in fact borderline scenarios that would have been more appropriate in another location. This demonstrates how important minor post-processing is for improving cluster quality, particularly in boundary case instances.
+
+
+\newpage
+
+# [**Conclusion**]{.underline}
+
+The data's specific and significant structure was revealed by the clustering procedure. It seemed appropriate to apply Euclidean distance exactly as it was because the exploratory work shown right away that the variables had different forms and distributions, no correlation, and no significant scaling problems. A solid basis for the primary clustering steps was provided by the scatterplots and distance distributions, which indicated that clusters were probably present. Both the silhouette approach and the gap statistic indicated that 15 clusters were the most logical choice when testing various values of K. This cross-methods agreement provided assurance about the structure we observed. Overall, K-medoids (CLARA) performed better because their clusters were stable, firmly packed, and less susceptible to initial positions. When we increased the number of clusters to 16, K-means produced findings that were similar yet had slightly rougher boundaries and more variation across runs.
+
+The majority of the points that were identified for having low silhouette scores were located at the borders of clusters, according to the outliers. They frequently only reflected some fuzziness around cluster borders and didn't appear to significantly alter the structure. Later inspections also discovered a few more borderline points, but the overall trends remained unchanged.
+
+Overall, the final clusters were strong, both statistically and visually. The best fit for the data was K-medoids with 15 clusters, however both techniques supported the patterns we saw. Although the current results already provide a solid and acceptable layout, it could be worthwhile to experiment with a soft or density-based clustering method if more time were available to address some of the overlap and unclear cases.
+
+\newpage
+
+# [**Appendix**]{.underline}
+
+```{r echo=TRUE, eval=FALSE}
+
+# -------------------------- Exploratory Data Analysis------------------------------
+# Pair plot 
+ggpairs(data, title = "Pair Plot of V1 and V2")
+
+# Alternatively, univariate histograms + density plots
+p1 <- ggplot(data, aes(x = V1)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "skyblue", color = "black") +
+  geom_density(color = "red", linewidth = 1) +
+  ggtitle("Distribution of V1")
+
+p2 <- ggplot(data, aes(x = V2)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "skyblue", color = "black") +
+  geom_density(color = "red", linewidth = 1) +
+  ggtitle("Distribution of V2")
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+
+# Scatter plot
+scatter <- ggplot(data, aes(x = V1, y = V2)) +
+  geom_point(alpha = 0.5) +
+  ggtitle("Scatterplot of V1 vs V2") +
+  theme_minimal()
+scatter
+
+# Compute pairwise Euclidean distance matrix
+distance_matrix <- dist(data, method = "euclidean")
+
+# Convert to a vector for plotting
+distance_vector <- as.vector(distance_matrix)
+
+# Plot histogram and density of pairwise distances
+library(ggplot2)
+distance_df <- data.frame(Distance = distance_vector)
+
+ggplot(distance_df, aes(x = Distance)) +
+  geom_histogram(bins = 50, fill = "lightblue", color = "black") +
+  geom_density(color = "red", linewidth = 1) +
+  ggtitle("Distribution of Pairwise Euclidean Distances") +
+  theme_minimal()
+
+# Standardize the data
+z_data <- scale(data)
+
+# Compute max absolute z-score for each observation
+max_z <- apply(abs(z_data), 1, max)
+
+# Identify top 10 potential outliers based on max z-score
+outlier_indices <- order(max_z, decreasing = TRUE)[1:10]
+outlier_values <- data[outlier_indices, ]
+
+# Display the outliers
+outlier_values
+
+# -------------------------- Hyperparameter Tuning------------------------------
+library(cluster)      
+library(factoextra)  
+library(ggplot2)
+
+dat <- data <- read.table("STA4026_Assignment_Clustering.txt", header = FALSE)
+colnames(dat) <- c("x", "y")
+data_scaled <- scale(dat)
+# function of average silhouette width for k-means
+sil_kmeans <- function(dat, k) {
+  km <- kmeans(dat, centers = k, nstart = 25)
+  ss <- silhouette(km$cluster, dist(dat))
+  mean(ss[, 3])
+}
+# function of average silhouette width for k-medoids
+sil_kmedoids <- function(dat, k) {
+  pam_fit <- pam(dat, k = k, pamonce = 5)
+  ss <- silhouette(pam_fit$clustering, dist(dat))
+  mean(ss[, 3])
+}
+# silhouette scores for k = 2 to 20
+k_vals <- 2:20
+kmeans_score <- sapply(k_vals, function(k) sil_kmeans(data_scaled, k))
+kmedoids_score <- sapply(k_vals, function(k) sil_kmedoids(data_scaled, k))
+
+# combining into data frame
+results <- data.frame(
+  K = rep(k_vals, 2),
+  Method = rep(c("K-means", "K-medoids"), each = length(k_vals)),
+  Silhouette = c(kmeans_score, kmedoids_score)
+)
+
+# plotting silhouette scores
+ggplot(results, aes(x = K, y = Silhouette, color = Method, shape = Method)) +
+  geom_line() +
+  geom_point(size = 3) +
+  labs(title = "Average Silhouette Score vs Number of Clusters (K)",
+       x = "Number of Clusters (K)",
+       y = "Average Silhouette Score") +
+  theme_minimal() +
+  theme(text = element_text(size = 12))
+
+
+set.seed(123)  
+library(cluster)
+library(ggplot2)
+
+set.seed(123)
+K_vals <- c(15, 16)
+runs <- 100
+
+# K-means multiple runs
+kmeans_runs <- function(dat, k, runs) {
+  replicate(runs, {
+    km <- kmeans(dat, centers = k, nstart = 1)
+    ss <- silhouette(km$cluster, dist(dat))
+    mean(ss[, 3])
+  })
+}
+
+# k-medoids multiple runs
+kmedoids_runs_clara <- function(dat, k, runs) {
+  replicate(runs, {
+    result <- tryCatch({
+      shuffled_data <- dat[sample(1:nrow(dat)), ]  
+      clara_fit <- clara(shuffled_data, k = k)
+      ss <- silhouette(clara_fit$clustering, dist(shuffled_data))
+      mean(ss[, 3])
+    }, error = function(e) NA)
+    result
+  })
+}
+
+# Run for each K
+results_list <- lapply(K_vals, function(k) {
+  km_scores <- kmeans_runs(data_scaled, k, runs)
+  pam_scores <- kmedoids_runs_clara(data_scaled, k, runs)
+
+  data.frame(
+    Silhouette = c(km_scores, pam_scores),
+    Method = rep(c("K-means", "K-medoids"), each = runs),
+    K = factor(k)
+  )
+})
+
+sensitivity_data <- bind_rows(results_list)
+
+# Plot 1: Density
+p1 <- ggplot(sensitivity_data, aes(x = Silhouette, fill = Method)) +
+  geom_density(alpha = 0.4) +
+  facet_wrap(~K, ncol = 2) +
+  labs(title = "Density of Silhouette Scores",
+       x = "Silhouette Score", y = "Density") +
+  theme_minimal() +
+  scale_fill_manual(values = c("K-means" = "red", "K-medoids" = "blue"))
+
+# Plot 2: ECDF
+p2 <- ggplot(sensitivity_data, aes(x = Silhouette, color = Method)) +
+  stat_ecdf(geom = "step", linewidth = 1.2) +
+  facet_wrap(~K, ncol = 2) +
+  labs(title = "ECDF of Silhouette Scores",
+       x = "Silhouette Score", y = "Cumulative Proportion") +
+  theme_minimal() +
+  scale_color_manual(values = c("K-means" = "red", "K-medoids" = "blue"))
+
+
+p1 
+
+p2
+
+library(cluster)
+library(future.apply)
+library(ggplot2)
+# Set up parallel processing
+future::plan(multisession)
+
+# Scale data (if not already)
+data_scaled <- scale(dat, center = TRUE, scale = FALSE)
+
+# Precompute distance matrix for k-means
+dist_mat <- dist(data_scaled)
+
+# Parameters
+runs <- 500
+K_vals <- c(15, 16)
+
+# Parallelised K-means function
+kmeans_sensitivity_parallel <- function(dat, k, runs) {
+  future_sapply(1:runs, function(i) {
+    km <- kmeans(dat, centers = k, nstart = 1)
+    ss <- silhouette(km$cluster, dist_mat)
+    mean(ss[, 3])
+  }, future.seed = TRUE)
+}
+
+# Parallelised K-medoids function 
+kmedoids_sensitivity_parallel <- function(dat, k, runs) {
+  future_sapply(1:runs, function(i) {
+    tryCatch({
+      shuffled_data <- dat[sample(1:nrow(dat)), ]  
+      clara_fit <- clara(shuffled_data, k = k)
+      ss <- silhouette(clara_fit$clustering, dist(shuffled_data))
+      mean(ss[, 3])
+    }, error = function(e) NA)
+  }, future.seed = TRUE)
+}
+
+# Run both methods
+kmeans_large <- lapply(K_vals, function(k) kmeans_sensitivity_parallel(data_scaled, k, runs))
+kmedoids_large <- lapply(K_vals, function(k) kmedoids_sensitivity_parallel(data_scaled, k, runs))
+
+# Combine into data frames
+df_kmeans_large <- data.frame(
+  Silhouette = unlist(kmeans_large),
+  K = factor(rep(K_vals, each = runs)),
+  Method = "K-means"
+)
+
+df_kmedoids_large <- data.frame(
+  Silhouette = unlist(kmedoids_large),
+  K = factor(rep(K_vals, each = runs)),
+  Method = "K-medoids"
+)
+
+# Merge into one dataset
+sensitivity_parallel <- rbind(df_kmeans_large, df_kmedoids_large)
+
+# Factor level ordering
+sensitivity_parallel$Method <- factor(sensitivity_parallel$Method,
+                                      levels = c("K-means", "K-medoids"))
+
+# Plot
+ggplot(sensitivity_parallel, aes(x = K, y = Silhouette, fill = Method)) +
+  geom_boxplot(position = position_dodge(0.7), width = 0.6,
+               outlier.shape = NA, alpha = 0.8) +
+  geom_jitter(aes(color = Method),
+              position = position_jitterdodge(jitter.width = 0.25, dodge.width = 0.7),
+              alpha = 0.4, size = 1.2) +
+  stat_summary(fun = median, geom = "crossbar",
+               aes(group = Method),
+               position = position_dodge(0.7),
+               width = 0.4, fatten = 2, color = "black") +
+  labs(title = "Sensitivity to Initialization (500 runs, Parallelised)",
+       y = "Average Silhouette Score",
+       x = "Number of Clusters (K)") +
+  theme_minimal() +
+  theme(text = element_text(size = 12)) +
+  scale_fill_manual(values = c("K-means" = "red", "K-medoids" = "blue")) +
+  scale_color_manual(values = c("K-means" = "red", "K-medoids" = "blue"))
+
+library(cluster)
+library(factoextra)
+
+
+set.seed(123)
+
+# gap statistic for K-means clustering (K = 2 to 20)
+gap_kmeans <- clusGap(data_scaled, FUN = kmeans, K.max = 17,
+                      B = 100, nstart = 10)
+
+# visualising the gap statistic
+fviz_gap_stat(gap_kmeans) +
+  labs(title = "Gap Statistic for K-means Clustering",
+       x = "Number of Clusters (K)",
+       y = "Gap Value") +
+  theme_minimal() +
+  theme(text = element_text(size = 12))
+
+# -------------------------- Cluster Analysis------------------------------
+
+library(cluster)
+library(factoextra)
+library(gridExtra)
+
+par(mfrow = c(2,4))
+
+K_vals <- c(15, 16)
+
+# Create empty lists to store plots
+silhouette_plots <- list()
+assignment_plots <- list()
+
+for (k in K_vals) {
+  # K-means
+  set.seed(123)
+  km <- kmeans(data_scaled, centers = k, nstart = 25)
+  ss_km <- silhouette(km$cluster, dist(data_scaled))
+  
+  silhouette_plots[[paste0("km_", k)]] <- fviz_silhouette(ss_km) +
+    ggtitle(paste("K-means Silhouette (K =", k, ")"))
+  
+  assignment_plots[[paste0("km_", k)]] <- fviz_cluster(list(data = data_scaled, cluster = km$cluster),
+                                                       geom = "point", ellipse.type = "convex") +
+    ggtitle(paste("K-means Clusters (K =", k, ")"))
+
+  # Clara (K-medoids)
+  clara_fit <- clara(data_scaled, k = k)
+  ss_clara <- silhouette(clara_fit$clustering, dist(data_scaled))
+
+  silhouette_plots[[paste0("clara_", k)]] <- fviz_silhouette(ss_clara) +
+    ggtitle(paste("K-medoids Silhouette (K =", k, ")"))
+  
+  assignment_plots[[paste0("clara_", k)]] <- fviz_cluster(list(data = data_scaled, cluster = clara_fit$clustering),
+                                                          geom = "point", ellipse.type = "convex") +
+    ggtitle(paste("K-medoids Clusters (K =", k, ")"))
+}
+
+
+# Group silhouette plots
+grid.arrange(grobs = silhouette_plots, ncol = 4, top = "Silhouette Plots (K-means and Clara)")
+
+# Group cluster assignment plots
+grid.arrange(grobs = assignment_plots, ncol = 4, top = "Cluster Assignments (K-means and Clara)")
+
+library(gridExtra)
+par(mfrow=c(1,2))
+dist_mat <- dist(data_scaled)
+
+
+set.seed(123)
+km_fit <- kmeans(data_scaled, centers = 15, nstart = 25)
+
+#  silhouette scores
+sil <- silhouette(km_fit$cluster, dist_mat)
+sil_df <- as.data.frame(sil)
+
+outliers <- sil_df[sil_df$sil_width < 0, ]
+#cat("Outlier indices:\n")
+#print(outliers[, c("cluster", "neighbor", "sil_width")])
+
+# plot silhouette plot with outliers highlighted
+p1 <- ggplot(sil_df, aes(x = factor(cluster), y = sil_width)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.4, fill = "lightblue") +
+  geom_jitter(aes(color = sil_width < 0), width = 0.2, size = 2) +
+  scale_color_manual(values = c("black", "red"), labels = c("Normal", "Outlier")) +
+  labs(title = "Silhouette Scores with Outliers Highlighted",
+       x = "Cluster", y = "Silhouette Width", color = "Point Type") +
+  theme_minimal()
+
+# Create dataframe with cluster assignments and identify outliers
+plot_df <- as.data.frame(data_scaled)
+colnames(plot_df) <- c("V1", "V2")
+plot_df$Cluster <- factor(km_fit$cluster)
+plot_df$Outlier <- "Normal"
+plot_df$Outlier[as.numeric(rownames(outliers))] <- "Outlier"
+
+
+# Cluster plot with outliers highlighted
+p2 <- ggplot(plot_df, aes(x = V1, y = V2, color = Cluster, shape = Outlier)) +
+  geom_point(alpha = 0.7, size = 2) +
+  scale_shape_manual(values = c("Normal" = 16, "Outlier" = 17)) +
+  labs(title = "Cluster Assignments - Outliers(K-means,K=15)") +
+  theme_minimal()
+
+grid.arrange(p1,p2, ncol = 2)
+
+
+# Extract negative silhouette observations
+neg_sil_points <- sil_df[sil_df$sil_width < 0, ]
+neg_indices <- as.numeric(rownames(neg_sil_points))
+
+# Original cluster assignments
+original_clusters <- km_fit$cluster
+
+#  cluster centers 
+cluster_centers <- km_fit$centers
+
+# distances from each negative silhouette point to each cluster center
+distances_to_centers <- as.matrix(dist(rbind(cluster_centers, data_scaled[neg_indices, ])))
+distances_to_centers <- distances_to_centers[(nrow(cluster_centers)+1):nrow(distances_to_centers), 1:nrow(cluster_centers)]
+
+# closest cluster 
+suggested_clusters <- sapply(seq_along(neg_indices), function(i) {
+  current_cluster <- original_clusters[neg_indices[i]]
+  dists <- distances_to_centers[i, ]
+  dists[current_cluster] <- Inf  
+  return(which.min(dists))
+})
+
+
+# compare old and new assignments
+post_proc_df <- data.frame(
+  Index = neg_indices,
+  OriginalCluster = original_clusters[neg_indices],
+  SuggestedCluster = suggested_clusters
+)
+
+# Reassign 
+temp_clusters <- original_clusters
+temp_clusters[neg_indices] <- suggested_clusters
+temp_sil <- silhouette(temp_clusters, dist_mat)
+temp_sil_df <- as.data.frame(temp_sil)
+new_avg_sil <- mean(temp_sil_df[, "sil_width"])
+
+# Plot comparison
+ggplot(temp_sil_df, aes(x = factor(cluster), y = sil_width)) +
+  geom_boxplot(fill = "lightgreen", alpha = 0.5, outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 1.5, alpha = 0.4) +
+  labs(title = "Silhouette Scores After Reassignment of Negative Points",
+       x = "Cluster", y = "Silhouette Width") +
+  theme_minimal()
+
+```
+

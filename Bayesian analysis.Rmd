@@ -1,0 +1,836 @@
+---
+title: "Intro to bayes"
+author: "Thashin Pillay & Troy Bisnath"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Packages required
+require(MASS)
+require(cubature)
+
+#Lets simulate some data
+set.seed(2021)
+n = 150 # Number of data points
+
+X.c = data.frame(matrix(rnorm(5*n), ncol=5))
+colnames(X.c) = c("X1", "X2", "X3", "X4", "X5")
+
+X = as.matrix(cbind(1, X.c)) # Design matrix
+
+e = matrix(rnorm(n), ncol=1) # Errors
+
+beta.true = matrix(c(1, 0, 10, 0, 2, -3), ncol=1)
+Y = X%*%beta.true + e # Observations
+
+
+```
+
+## Question 1(a)
+
+We are given the Bayesian linear regression model:
+
+$$
+y_i = x_i^T \beta + e_i, \quad e_i \sim N(0, \sigma^2), \quad i = 1, \dots, n
+$$
+
+with prior distributions:
+
+$$
+\begin{aligned}
+\beta | \sigma^2 &\sim \mathcal{N}_{k+1}(\tilde{\beta}, \sigma^2 M) \\
+\sigma^2 &\sim IG(a, b)
+\end{aligned}
+$$ where $\tilde{\beta} = 0$, $M = I_{k+1}$, and $a = b = 1$.
+
+------------------------------------------------------------------------
+
+**Deriving the Conditional Posterior Distributions**
+
+------------------------------------------------------------------------
+
+1\. Posterior of $\beta \mid \sigma^2, y, X$
+
+We use Bayes' theorem:
+
+$$
+\pi(\beta | \sigma^2, y, X) \propto f(y|\beta, \sigma^2) \cdot \pi(\beta | \sigma^2)
+$$
+
+We are combining:
+
+-   The likelihood:
+
+$$
+f(y|\beta, \sigma^2) \propto (\sigma^2)^{-n/2} \exp\left(-\frac{1}{2\sigma^2}(y - X\beta)^T(y - X\beta)\right)
+$$
+
+-   The prior:
+
+$$
+\pi(\beta|\sigma^2) \propto (\sigma^2)^{-(k+1)/2} \exp\left(-\frac{1}{2\sigma^2}(\beta - \tilde{\beta})^T M^{-1} (\beta - \tilde{\beta})\right)
+$$
+
+Combining the exponentials:
+
+$$
+\pi(\beta | \sigma^2, y, X) \propto \exp\left(-\frac{1}{2\sigma^2} \left[ (y - X\beta)^T(y - X\beta) + (\beta - \tilde{\beta})^T M^{-1} (\beta - \tilde{\beta}) \right] \right)
+$$
+
+This is the kernel of a multivariate normal:
+
+$$
+\beta | \sigma^2, y, X \sim \mathcal{N}(\mu_\beta, \sigma^2 (M + X^TX)^{-1})
+$$
+
+where:
+
+$$
+\mu_{\beta} = (M + X^TX)^{-1}(X^TX\hat{\beta} + M\tilde{\beta}), \quad \hat{\beta} = (X^TX)^{-1}X^Ty
+$$
+
+------------------------------------------------------------------------
+
+2\. Posterior of $\sigma^2 | y, X$
+
+We now compute the marginal posterior using Hint 1:
+
+$$
+\pi(\sigma^2 | y, X) = \int \pi(\beta, \sigma^2 | y, X) \, d\beta
+$$
+
+We know from the conjugate analysis that:
+
+$$
+\pi(\beta, \sigma^2 | y, X) \propto (\sigma^2)^{-\frac{n + k + 1}{2}} \exp\left(-\frac{1}{2\sigma^2} A_2 \right)
+$$
+
+Integrating over $\beta$ gives the marginal posterior for $\sigma^2$, which is inverse gamma. We apply Hint 2 to handle determinants when integrating over the multivariate normal prior on $\beta$:
+
+Use: $|aA| = a^k |A|$ to simplify determinant terms like $|\sigma^2 (M + X^TX)|$.
+
+We conclude:
+
+$$
+\sigma^2 | y, X \sim IG\left(a + \frac{n}{2},\ b + \frac{A_2}{2} \right)
+$$
+
+where:
+
+$$
+A_2 = y^Ty + \tilde{\beta}^T M \tilde{\beta} - \mu_{\beta}^T (M + X^TX) \mu_{\beta}
+$$
+
+------------------------------------------------------------------------
+
+**Final Result**
+
+-   Conditional posterior of $\beta$:
+
+$$
+\beta | \sigma^2, y, X \sim \mathcal{N}_{k+1}(\mu_\beta, \sigma^2(M + X^TX)^{-1})
+$$
+
+-   Conditional posterior of $\sigma^2$:
+
+$$
+\sigma^2 | y, X \sim IG\left(a + \frac{n}{2},\ b + \frac{A_2}{2} \right)
+$$
+
+### Question 1(b)
+
+To simulate from the joint posterior distribution $\pi(\beta, \sigma^2 | y, X)$, we implement a Gibbs sampling using the full conditionals derived in Question 1(a):
+
+-   $\beta | \sigma^2, y, X \sim \mathcal{N}_{k+1}(\mu_\beta, \sigma^2 V)$, where $V = (M + X^TX)^{-1}$
+-   $\sigma^2 | \beta, y, X \sim \text{IG}\left(a + \frac{n}{2},\ b + \frac{A_2}{2} \right)$
+
+These results follow from standard Bayesian conjugate analysis for the linear regression model. A gibbs function was then created in R to create an amount of posterior samples from the conditionals we have found from 1a.
+
+```{r message=FALSE, warning=FALSE}
+
+gibbs_lm <- function(Y, X, n_iter = 10000) {
+  n <- nrow(X)
+  k <- ncol(X)
+
+  # Prior hyperparameters
+  a <- 1
+  b <- 1
+  beta_prior_mean <- rep(0, k)
+  beta_prior_var <- diag(k)  # Identity matrix
+
+  # Precompute matrices
+  XtX <- t(X) %*% X
+  Xty <- t(X) %*% Y
+  M_inv <- diag(k)  # Inverse of prior variance (identity)
+
+  # Storage
+  beta_samples <- matrix(0, nrow = n_iter, ncol = k)
+  sigma2_samples <- numeric(n_iter)
+
+  # Initial value
+  sigma2 <- 1
+
+  for (t in 1:n_iter) {
+    # Step 1: Sample beta | sigma^2, y, X
+    V_inv <- XtX + M_inv
+    V <- solve(V_inv)
+    mu_beta <- V %*% (Xty + M_inv %*% beta_prior_mean)
+
+    # Multivariate normal sample: beta ~ N(mu_beta, sigma^2 * V)
+    z <- rnorm(k)
+    beta <- as.vector(mu_beta + sqrt(sigma2) * chol(V) %*% z)
+
+    # Step 2: Sample sigma^2 | beta, y, X
+    A2 <- sum((Y - X %*% beta)^2) + 
+          t(beta - beta_prior_mean) %*% M_inv %*% (beta - beta_prior_mean)
+
+    shape <- a + n / 2
+    rate <- b + A2 / 2
+    sigma2 <- 1 / rgamma(1, shape = shape, rate = rate)
+
+    # Store samples
+    beta_samples[t, ] <- beta
+    sigma2_samples[t] <- sigma2
+  }
+
+  return(list(beta = beta_samples, sigma2 = sigma2_samples))
+}
+
+```
+
+## Question 1(c-i)
+
+We generate 50 000 posterior samples and create trace plots for analysis.
+
+```{r echo=FALSE, fig.height=10, fig.width= 10, message=FALSE, warning=FALSE}
+samples <- gibbs_lm(Y, X, n_iter = 50000)
+# Extract samples
+beta_samples <- samples$beta
+sigma2_samples <- samples$sigma2
+k <- ncol(beta_samples)
+
+# Plot trace plots for beta
+par(mfrow = c(ceiling((k + 1) / 2), 2), mar = c(4, 4, 2, 1))
+for (j in 1:k) {
+  plot(beta_samples[, j], type = "l", col = "darkblue",
+       main = paste("Trace plot for beta[", j, "]", sep = ""),
+       xlab = "Iteration", ylab = expression(beta))
+  abline(h = mean(beta_samples[, j]), col = "red", lty = 2)
+}
+
+# Plot trace plot for sigma^2
+plot(sigma2_samples, type = "l", col = "darkgreen",
+     main = expression("Trace plot for " ~ sigma^2),
+     xlab = "Iteration", ylab = expression(sigma^2))
+abline(h = mean(sigma2_samples), col = "red", lty = 2)
+
+```
+
+**Trace Plot Interpretation**
+
+We generated trace plots for each of the 6 components of the parameter vector $\beta$, as well as for the scalar parameter $\sigma^2$, based on 50,000 Gibbs samples using the synthetic dataset provided in the assignment.
+
+From the plots:
+
+-   All chains for $\beta_1$ to $\beta_6$ and $\sigma^2$ appear to have converged.
+-   Each trace plot fluctuates around a stable region without showing any trends, indicating good mixing and stationarity.
+-   The chains do not exhibit early-phase drift, suggesting that burn-in may not be necessary.
+-   The $\beta$ chains vary over different locations and scales, which is expected due to the different magnitudes of the coefficients in the data-generating process.
+
+**Conclusion**
+
+The Gibbs sampler appears to have successfully converged for all parameters, producing samples representative of the joint posterior distribution $\pi(\beta, \sigma^2 \mid y, X)$.
+
+### Question 1(c)(ii)(i): Posterior Densities
+
+We plot the posterior densities of the regression coefficients $\beta_1, \dots, \beta_6$ and $\sigma^2$ to visualize the shape and central tendency of the marginal posterior distributions.
+
+This is done using kernel density estimation from the samples obtained via Gibbs sampling.
+
+```{r echo=FALSE, fig.length=10, fig.width=10, message=FALSE, warning=FALSE}
+par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
+for (j in 1:k) {
+  plot(density(beta_samples[, j]), main = paste("Density of beta[", j, "]"),
+       xlab = expression(beta), col = "navy", lwd = 2)
+  abline(v = mean(beta_samples[, j]), col = "red", lty = 2)         # Posterior mean
+  abline(v = beta.true[j], col = "green", lty = 2)                  # True coefficient
+}
+```
+
+The density plots above show the posterior distributions for each of the six regression coefficients $\beta_1$ through $\beta_6$, obtained from the Gibbs sampler with 50,000 iterations.
+
+Each plot includes: - A red dashed line representing the posterior mean (sample average), - A green dashed line representing the true value used to simulate the data.
+
+**Interpretation:**
+
+-   $\beta_1$, $\beta_3$, $\beta_5$, and $\beta_6$:\
+    The posterior densities are centered close to the true values, with narrow and symmetric shapes, suggesting that these parameters were accurately recovered by the sampler. The posterior means are very close to the green dashed lines, indicating strong signal and good convergence.
+
+-   $\beta_2$ and $\beta_4$:\
+    These coefficients were simulated with true value 0, and the posterior densities are centered around zero. This shows that the sampler appropriately identifies them as having negligible or no effect on the response variable. The posterior means are close to the true zero values, confirming this.
+
+**Conclusion:**
+
+The posterior densities show good recovery of the true parameters: - The posterior means are generally close to the true values. - The shape of each distribution is approximately normal. - Parameters with true values equal to zero have posteriors centered at zero, supporting their potential exclusion from the model.
+
+This suggests the Gibbs sampler is correctly sampling from the posterior, and that the Bayesian inference framework is effective in identifying the important predictors.
+
+### Question 1(c)(ii)(ii): Density Plots with 95% Credible Intervals
+
+We now enhance the density plots by adding: - Red dashed line: posterior mean (sample average) - Green dashed line: true coefficient value (beta.true) - Blue dashed lines: 2.5% and 97.5% quantiles — the bounds of the 95% credible interval
+
+These plots allow us to visually assess both accuracy and uncertainty in our posterior inference.
+
+```{r echo=FALSE, fig.length=10, fig.width=10, message=FALSE, warning=FALSE}
+
+par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
+for (j in 1:k) {
+  ci <- quantile(beta_samples[, j], probs = c(0.025, 0.975))
+  
+  plot(density(beta_samples[, j]), main = paste("95% CI: beta[", j, "]"),
+       xlab = expression(beta), col = "navy", lwd = 2)
+  
+  abline(v = mean(beta_samples[, j]), col = "red", lty = 2)        # Posterior mean
+  abline(v = beta.true[j], col = "green", lty = 2)                # True beta
+  abline(v = ci[1], col = "blue", lty = 3)                        # Lower 95%
+  abline(v = ci[2], col = "blue", lty = 3)                        # Upper 95%
+}
+```
+
+-   For $\beta_1$, $\beta_3$, $\beta_5$, and $\beta_6$:
+    -   The 95% credible intervals are narrow and do not contain zero.
+    -   The posterior means lie close to the true values.
+    -   This indicates strong evidence that these predictors have real effects on the response variable, and the posterior distributions capture their values with high certainty.
+-   For $\beta_2$ and $\beta_4$:
+    -   The credible intervals are centered near zero and clearly include zero.
+    -   These parameters were set to zero in the data-generating process.
+    -   This suggests that the model correctly identifies them as having no significant influence, and the intervals reflect that uncertainty appropriately.
+
+**Credible vs Confidence Intervals:**
+
+-   A 95% credible interval means that, given the observed data, there is a 95% probability that the true value of $\beta_j$ lies within the interval.
+-   A 95% frequentist confidence interval, by contrast, refers to a property of the sampling procedure — in 95% of repeated samples, the interval will contain the true value.
+-   Credible intervals are data-dependent and offer a more intuitive interpretation in practice.
+
+**Conclusion:**
+
+The credible intervals align well with the true parameter values: - They are tight and accurate for influential variables, - And reflect the uncertainty around parameters that were truly zero.
+
+This demonstrates that Bayesian posterior inference is effective for identifying and quantifying the relevance of each predictor in the model.
+
+### Question 1(c)(ii)(iii)
+
+We assess which regression coefficients are worth including in the model by examining their 95% credible intervals.
+
+If the interval **excludes 0**, the variable is considered **important**. If the interval **includes 0**, we treat the effect as **statistically uncertain** and the variable may be excluded.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(knitr)
+
+# Compute 95% credible intervals
+credible_intervals <- apply(samples$beta, 2, quantile, probs = c(0.025, 0.975))
+
+# Determine if zero is included in each interval
+selected <- !(credible_intervals[1, ] < 0 & credible_intervals[2, ] > 0)
+
+# Create results table
+selection_df <- data.frame(
+  Parameter = paste0("beta[", 1:6, "]"),
+  Lower_95 = round(credible_intervals[1, ], 4),
+  Upper_95 = round(credible_intervals[2, ], 4),
+  Selected = ifelse(selected, "Yes", "No")
+)
+
+kable(selection_df, caption = "95% Credible Intervals and Variable Selection", align = "lccr")
+
+```
+
+-   **Selected Variables:**
+    -   $\beta_1$, $\beta_3$, $\beta_5$, and $\beta_6$ all have 95% credible intervals that exclude zero, indicating strong posterior belief that these coefficients have non-zero effects.
+    -   These are the same parameters that were assigned true non-zero values in the data-generating process.
+    -   This confirms that the Bayesian model correctly identifies important variables.
+-   **Not Selected:**
+    -   $\beta_2$ and $\beta_4$ have credible intervals that include zero, suggesting substantial posterior uncertainty about whether these coefficients are different from zero.
+    -   This aligns with their true values being zero in the simulation, indicating that they are uninformative and should likely be excluded from the model.
+
+**Conclusion:**
+
+Using 95% credible intervals for variable selection, the model: - Retains the four true predictors, - Excludes the two noise variables, - Demonstrates the effectiveness of Bayesian inference for both parameter estimation and model selection.
+
+# Question 2
+
+### Question 2(a)
+
+We are given the observation model: - Let $Y_i \sim \text{Bern}(\theta_i)$ be the indicator that the fisherman is located in cell $i$ - Let $Z_i \sim \text{Bern}(Y_i p_i)$ represent the result of searching cell $i$: - That is, $Z_i = 1$ if the fisherman is found - $Z_i = 0$ if not
+
+We observe $Z_i = 0$, and want to update our belief about the probability the fisherman is in cell $i$.
+
+------------------------------------------------------------------------
+
+**Derivation of Equation (2)**
+
+We use Bayes' theorem:
+
+$$
+\pi(Y_i = 1 \mid Z_i = 0) = \frac{P(Z_i = 0 \mid Y_i = 1) P(Y_i = 1)}{P(Z_i = 0)}
+$$
+
+We compute the pieces:
+
+-   $P(Z_i = 0 \mid Y_i = 1) = 1 - p_i$
+-   $P(Y_i = 1) = \theta_i$
+-   The marginal likelihood is: $$
+    P(Z_i = 0) = (1 - p_i)\theta_i + (1)(1 - \theta_i) = 1 - p_i \theta_i
+    $$
+
+Substitute into Bayes’ formula:
+
+$$
+\pi(Y_i = 1 \mid Z_i = 0) = \frac{(1 - p_i) \theta_i}{1 - p_i \theta_i}
+$$
+
+This is the form of Equation (2).
+
+------------------------------------------------------------------------
+
+**Derivation of Equation (4)**
+
+Now consider any $j \neq i$ (i.e., a different cell). We update:
+
+$$
+\pi(Y_j = 1 \mid Z_i = 0) = \frac{P(Z_i = 0 \mid Y_j = 1) P(Y_j = 1)}{P(Z_i = 0)}
+$$
+
+If the fisherman is in cell $j$, then he is not in cell $i$, and the probability of not finding him in cell $i$ is 1:
+
+-   $P(Z_i = 0 \mid Y_j = 1) = 1$
+-   $P(Y_j = 1) = \theta_j$
+
+So:
+
+$$
+\pi(Y_j = 1 \mid Z_i = 0) = \frac{\theta_j}{1 - p_i \theta_i}
+$$
+
+This is the form of Equation (4).
+
+### Question 2(b)
+
+We can use Equations (2) and (4) to construct a Bayesian search strategy by iteratively updating our beliefs about the fisherman’s location based on unsuccessful search outcomes.
+
+At each step of the search:
+
+1.  **Choose a location to search**:\
+    We select the cell $i$ with the **highest posterior probability** $\theta_i$ of containing the fisherman.
+
+2.  **Perform the search in cell** $i$:
+
+    -   If the fisherman is found ($Z_i = 1$), we stop.
+    -   If the fisherman is **not found** ($Z_i = 0$), we update our belief:
+        -   Use Equation (2) to update $\theta_i$: $$
+            \theta_i' = \frac{(1 - p_i) \theta_i}{1 - p_i \theta_i}
+            $$
+        -   Use Equation (4) to update all other cells $j \neq i$: $$
+            \theta_j' = \frac{\theta_j}{1 - p_i \theta_i}
+            $$
+
+3.  **Repeat**:
+
+    -   The updated posterior distribution becomes the new prior.
+    -   We repeat the process until the fisherman is successfully located.
+
+This procedure ensures that we incorporate all past information, and that each new search decision is based on the most up-to-date posterior beliefs.
+
+### Question 2(c)
+
+```{r echo=TRUE, fig.length=10, fig.width=10, message=FALSE, warning=FALSE}
+#### Required Functions ####
+
+library(ggplot2)
+library(MASS)
+library(reshape2)
+set.seed(1234)
+
+#### Data Generating Functions ####
+
+generate_lost <- function(grid_size, nsims){
+  
+  # Function to generate the prior distribution for the 
+  # location of the lost fisherman
+  # Args: 
+  #       grid_size: the dimensions of the square search grid
+  #       nsims: number of samples to base the prior distribution on
+  
+  mu_vec  <- c(grid_size/2, grid_size/2)
+  sig_mat <- matrix(c(2, 1, 5, 5), 2,2)
+  
+  dat <- mvrnorm(nsims, mu_vec, sig_mat)
+  
+  dat <- round(abs(dat)) 
+  
+  prior <- matrix(rep(0,grid_size^2), grid_size, grid_size)
+  for (i in 1:NROW(dat)){
+    
+    if (dat[i,1] < grid_size & dat[i,2] < grid_size){
+      prior[dat[i,1], dat[i,2]] <- prior[dat[i,1], dat[i,2]] + 1
+    }
+    
+  }
+  prior <- prior/sum(prior)
+  return(prior)
+}
+
+generate_fisherman <- function(grid_size){
+  
+  # Function to generate the true location of the lost fisherman.
+  # This should not effect the search decision in any way!! It is unkown
+  # to the search crew.
+  # Args: 
+  #       grid_size: the dimensions of the square search grid
+
+  
+  mu_vec  <- c(grid_size/2, grid_size/2)
+  sig_mat <- matrix(c(2, 1, 5, 5), 2,2)
+  
+  location  <- round(mvrnorm(1, mu_vec, sig_mat))
+  true_grid <- matrix(rep(0, grid_size^2), grid_size, grid_size)
+  true_grid[location[1], location[2]] <- 1
+  
+  return(true_grid)
+}
+
+
+
+search_simulation <- function(grid_size = 20, prior, true_loc, detect_pr, max_steps = 48, track = TRUE) {
+  posterior <- prior
+  posterior_history <- list()
+  posterior_true_cell <- numeric(max_steps)
+  count <- 0
+  found <- FALSE
+
+  true_coords <- which(true_loc == 1, arr.ind = TRUE)[1, ]
+  i_true <- true_coords[1]
+  j_true <- true_coords[2]
+
+  while (!found && count < max_steps) {
+    count <- count + 1
+
+    if (track) {
+      posterior_history[[count]] <- posterior
+      posterior_true_cell[count] <- posterior[i_true, j_true]
+    }
+
+    coords <- which(posterior == max(posterior), arr.ind = TRUE)[1, ]
+    i <- coords[1]
+    j <- coords[2]
+
+    # Simulate search
+    if (true_loc[i, j] == 1 && runif(1) < detect_pr[i, j]) {
+      found <- TRUE
+    } else {
+      # Bayesian update
+      posterior[i, j] <- (1 - detect_pr[i, j]) * posterior[i, j]
+      posterior <- posterior / sum(posterior)
+    }
+  }
+
+  list(
+    posterior_step1 = if (track) posterior_history[[1]] else NULL,
+    posterior_final = posterior,
+    posterior_trace = if (track) posterior_true_cell[1:count] else NULL,
+    steps = count,
+    found = found
+  )
+}
+
+
+#### Simulation ####
+
+search_size <- 20
+unifs <- runif(search_size^2, min = 0.6, max = 0.9)
+detect_pr <- matrix(unifs, ncol = search_size)
+prior <- generate_lost(search_size, nsims = 100)
+true_loc <- generate_fisherman(search_size)
+
+
+result <- search_simulation(search_size, prior, true_loc, detect_pr)
+
+# Function to plot heatmaps
+plot_heatmap <- function(mat, title) {
+  df <- melt(mat)
+  ggplot(df, aes(x = Var2, y = Var1, fill = value)) +
+    geom_tile() +
+    scale_fill_viridis_c(option = "C") +
+    coord_fixed() +
+    labs(title = title, x = "Column", y = "Row") +
+    theme_minimal()
+}
+
+# Plot step 1 heatmap
+plot_heatmap(result$posterior_step1, "Posterior Distribution at Step 1")
+
+# Plot final step heatmap
+plot_heatmap(result$posterior_final, "Posterior Distribution at Final Step")
+
+# Plot posterior trace of true fisherman's cell
+plot(1:result$steps, result$posterior_trace, type = "l", col = "darkred", lwd = 2,
+     xlab = "Search Step (Hour)", ylab = "Posterior at True Location",
+     main = "Posterior Probability of True Cell Over Time")
+abline(h = 0.5, col = "grey", lty = 2)
+
+
+
+
+
+n_sims <- 100
+successes <- numeric(n_sims)
+for (s in 1:n_sims) {
+  prior <- generate_lost(search_size, nsims = 100)
+  true_loc <- generate_fisherman(search_size)
+  detect_pr <- matrix(runif(search_size^2, 0.6, 0.9), ncol = search_size)
+
+  result <- search_simulation(
+    grid_size = search_size,
+    prior = prior,
+    true_loc = true_loc,
+    detect_pr = detect_pr,
+    max_steps = 48,
+    track = FALSE  # We don’t need plots or history here
+  )
+
+  successes[s] <- result$found
+}
+
+# Calculate success rate
+success_rate <- mean(successes)
+success_count <- sum(successes)
+
+success_count
+success_rate
+```
+
+The simulation was performed with `nsims = 100`, which creates a smooth prior distribution over the 20×20 grid. Each cell initially reflects a plausible chance of containing the fisherman, with probabilities concentrated near the grid center.
+
+#### Posterior at Step 1
+
+The heatmap at step 1 reflects the prior belief: it is smoothly distributed across nearby central locations due to multiple simulated points. This introduces uncertainty that reflects realistic prior knowledge:we believe the fisherman is more likely in the center, but there is no certainty.
+
+#### Posterior at Final Step
+
+After 35 search steps, the posterior has updated significantly. The probability mass has shifted and become more concentrated around certain regions. This shows that the Bayesian updating process is narrowing down the likely locations based on failed search attempts. Despite not having found the fisherman yet, the algorithm is "learning" and focusing on increasingly likely areas.
+
+#### Posterior Probability of the True Cell Over Time
+
+The plot of posterior probability for the fisherman's true cell shows a steady increase over time — from \~1% to over 3.5%. This indicates that as more information (unsuccessful searches) accumulates, the model becomes more confident that the true location lies in a specific area. Even without direct detection, Bayesian reasoning updates the belief based on what has not been observed.
+
+We can also observe over the 100 simulations our success rate of finding the fisherman ranges from 60-65%.
+
+This demonstrates the effectiveness of Bayesian search: by using posterior updates, the model intelligently focuses on promising areas, reflecting both probabilistic learning and search efficiency.
+
+## Question 2(d)
+
+If the detection probability is constant across all cells (e.g., every cell has the same probability like 0.7), the Bayesian search strategy becomes easier to interpret and apply.
+
+### Effect on the Search Strategy:
+
+-   The update rule for the posterior becomes **uniform across the grid**, because every cell responds to a failed search in the same way.
+-   This means the decision of where to search next is based **entirely on the posterior probabilities**, without being skewed by variation in detection strength between cells.
+-   The algorithm will always choose the cell with the highest current posterior probability.
+
+### Advantages:
+
+-   The search path is **simpler and more stable** — it focuses on areas the model believes are most likely, without being distorted by detection differences.
+-   The interpretation of failed searches is cleaner: all updates assume the same level of detectability.
+
+### Limitations:
+
+-   It may be **less realistic**, because in real-world searches, some locations may be easier or harder to search than others (e.g., weather or terrain may affect detectability).
+-   If the constant detection probability is **too low**, even successful targeting of the correct cell might result in failure to detect, which slows down progress.
+
+# Question 3
+
+### Question 3(a)
+
+In this model, we consider a linear regression setting with heteroskedastic error. Specifically, each observation is drawn from one of two Gaussian components, leading to a mixture of variances in the errors.
+
+We observe:
+
+$$
+Y = X \beta + \varepsilon, \quad \varepsilon \sim \mathcal{N}(0, D^{-1})
+$$
+
+where the diagonal matrix $D$ holds inverse variances $\tau_i = \frac{1}{\sigma_i^2}$, and each observation is either drawn with precision $\tau_1$ or $\tau_2$. That is:
+
+$$
+\tau_i =
+\begin{cases}
+\tau_1, & \text{if } z_i = 1 \\
+\tau_2, & \text{if } z_i = 0
+\end{cases}
+$$
+
+for some latent indicator vector $z \in \{0, 1\}^n$.
+
+------------------------------------------------------------------------
+
+### Partitioning the Data
+
+We partition the data into two groups based on the allocation vector $z$:
+
+$$
+Y = \begin{bmatrix} Y_1 \\ Y_2 \end{bmatrix}, \quad
+X = \begin{bmatrix} X_1 \\ X_2 \end{bmatrix}
+$$
+
+where: - $Y_1$ and $X_1$ correspond to observations with $z_i = 1$ (associated with $\tau_1$), - $Y_2$ and $X_2$ correspond to observations with $z_i = 0$ (associated with $\tau_2$).
+
+Let $n_1$ and $n_2$ be the number of observations in groups 1 and 2 respectively.
+
+------------------------------------------------------------------------
+
+### Likelihood Function
+
+Under the Gaussian assumptions, and noting that the observations in $Y_1$ and $Y_2$ are conditionally independent, the likelihood becomes:
+
+$$
+p(Y \mid \beta, \tau_1, \tau_2) \propto
+\exp\left( -\frac{\tau_1}{2} \|Y_1 - X_1 \beta\|^2 - \frac{\tau_2}{2} \|Y_2 - X_2 \beta\|^2 \right)
+$$
+
+------------------------------------------------------------------------
+
+### Prior on $\beta$
+
+As given in the assignment, we assume a zero-mean Gaussian prior:
+
+$$
+\beta \sim \mathcal{N}(0, T_0)
+$$
+
+This corresponds to:
+
+$$
+p(\beta) \propto \exp\left( -\frac{1}{2} \beta^T T_0^{-1} \beta \right)
+$$
+
+------------------------------------------------------------------------
+
+### Posterior for $\beta$
+
+Combining the likelihood and prior, the full conditional for $\beta$ is:
+
+$$
+\beta \mid \tau_1, \tau_2, X, Y \sim \mathcal{N}(\mu_\beta, \Sigma_\beta)
+$$
+
+with:
+
+$$
+\Sigma_\beta = \left( \tau_1 X_1^T X_1 + \tau_2 X_2^T X_2 + T_0^{-1} \right)^{-1}
+$$
+
+and
+
+$$
+\mu_\beta = \Sigma_\beta \left( \tau_1 X_1^T Y_1 + \tau_2 X_2^T Y_2 \right)
+$$
+
+This is a standard result from Bayesian linear regression with weighted Gaussian likelihoods and a Gaussian prior.
+
+------------------------------------------------------------------------
+
+#### **Posterior for** $\tau_1$
+
+Using the conjugacy of the Gaussian likelihood and the Gamma prior for precision, the full conditional for $\tau_1$ is:
+
+$$
+\tau_1 \mid \beta, \tau_2, X, Y \sim \text{Gamma} \left(
+a + \frac{n_1}{2}, \;
+b + \frac{1}{2} \|Y_1 - X_1 \beta\|^2
+\right)
+$$
+
+This corresponds to an inverse-Gamma for $\sigma_1^2$, or Gamma for $\tau_1$, and reflects the update of a scale parameter given normally distributed residuals.
+
+------------------------------------------------------------------------
+
+#### Posterior for $\tau_2$
+
+Similarly, the posterior for $\tau_2$ is:
+
+$$
+\tau_2 \mid \beta, \tau_1, X, Y \sim \text{Gamma} \left(
+a + \frac{n_2}{2}, \;
+b + \frac{1}{2} \|Y_2 - X_2 \beta\|^2
+\right) \cdot \mathbb{I}_{\tau_2 < \tau_1}
+$$
+
+The indicator $\mathbb{I}_{\tau_2 < \tau_1}$ enforces the ordering constraint specified in the assignment — that $\tau_2 < \tau_1$, or equivalently $\lambda_2 > \lambda_1$, which makes sense when interpreting $\tau_1$ as representing the more precise (lower variance) component.
+
+------------------------------------------------------------------------
+
+### Summary
+
+Each of the above posterior conditionals arises naturally from combining the likelihood of a Gaussian model with mixture variances, and conjugate priors on both the regression coefficients and the precisions. These expressions form the core components required for implementing a Gibbs sampler in Question 3(b).
+
+### Question 3(b)
+
+```{r message=FALSE, warning=FALSE}
+hetero_gibbs <- function(Y, X, n1, a = 1, b = 1, T0 = diag(ncol(X)), n_iter = 5000) {
+  n <- nrow(X)
+  n2 <- n - n1
+  p <- ncol(X)
+  beta_samples <- matrix(NA, nrow = n_iter, ncol = p)
+  tau1_samples <- numeric(n_iter)
+  tau2_samples <- numeric(n_iter)
+
+  beta <- rep(0, p)
+  tau1 <- 1
+  tau2 <- 0.5
+
+  X1 <- X[1:n1, ]
+  Y1 <- Y[1:n1]
+  X2 <- X[(n1+1):n, ]
+  Y2 <- Y[(n1+1):n]
+
+  for (i in 1:n_iter) {
+    Sigma_beta <- solve(tau1 * t(X1) %*% X1 + tau2 * t(X2) %*% X2 + solve(T0))
+    mu_beta <- Sigma_beta %*% (tau1 * t(X1) %*% Y1 + tau2 * t(X2) %*% Y2)
+    beta <- mvrnorm(1, mu = mu_beta, Sigma = Sigma_beta)
+    
+    res1 <- Y1 - X1 %*% beta
+    res2 <- Y2 - X2 %*% beta
+    tau1 <- rgamma(1, a + n1/2, b + 0.5 * sum(res1^2))
+
+    repeat {
+      tau2_prop <- rgamma(1, a + n2/2, b + 0.5 * sum(res2^2))
+      if (tau2_prop < tau1) {
+        tau2 <- tau2_prop
+        break
+      }
+    }
+
+    beta_samples[i, ] <- beta
+    tau1_samples[i] <- tau1
+    tau2_samples[i] <- tau2
+  }
+  
+  list(beta_samples = beta_samples, tau1_samples = tau1_samples, tau2_samples = tau2_samples)
+}
+
+# Simulate heteroskedastic data
+set.seed(2025)
+n1 <- 120
+n2 <- 30
+n <- n1 + n2
+X.c <- data.frame(matrix(rnorm(5 * n), ncol = 5))
+colnames(X.c) <- c("X1", "X2", "X3", "X4", "X5")
+X <- as.matrix(cbind(1, X.c))
+beta.true <- matrix(c(1, 0, 10, 0, 2, -3), ncol = 1)
+e <- c(rnorm(n1, 0, 1), rnorm(n2, 0, 3))
+Y <- X %*% beta.true + e
+
+# Running sampler
+hetero_results <- hetero_gibbs(Y, X, n1)
+```
